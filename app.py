@@ -9,6 +9,7 @@ from bson.objectid import ObjectId
 from datetime import datetime, timedelta
 from functools import wraps
 from passlib.hash import sha256_crypt
+from werkzeug.utils import secure_filename
 
 # Load environment variables
 load_dotenv()
@@ -513,9 +514,36 @@ def admin_dashboard():
 def admin_menu():
     menu_items = mongo.db.menu.find()
     categories = mongo.db.menu.distinct('category')
+    
+    # Calculate menu statistics
+    stats = {
+        'total_items': mongo.db.menu.count_documents({}),
+        'active_items': mongo.db.menu.count_documents({'active': True}),
+        'categories': len(categories),
+    }
+    
+    # Get top seller safely
+    try:
+        top_seller = mongo.db.orders.aggregate([
+            {'$unwind': '$items'},
+            {'$group': {
+                '_id': '$items.id',
+                'name': {'$first': '$items.name'},
+                'count': {'$sum': '$items.quantity'}
+            }},
+            {'$sort': {'count': -1}},
+            {'$limit': 1}
+        ]).next()
+        stats['top_seller_orders'] = top_seller['count']
+        stats['top_seller_name'] = top_seller['name']
+    except StopIteration:
+        stats['top_seller_orders'] = 0
+        stats['top_seller_name'] = 'No orders yet'
+    
     return render_template('admin/menu.html',
                          menu_items=menu_items,
-                         categories=categories)
+                         categories=categories,
+                         stats=stats)
 
 @app.route('/admin/orders')
 @login_required
@@ -1002,36 +1030,376 @@ def delete_user(user_id):
 @login_required
 @admin_required
 def bulk_user_action():
-    data = request.json
-    user_ids = data.get('user_ids', [])
-    action = data.get('action')
+    try:
+        data = request.json
+        user_ids = data.get('user_ids', [])
+        action = data.get('action')
+        
+        if not user_ids or not action:
+            return jsonify({'error': 'Missing required parameters'}), 400
+        
+        # Convert string IDs to ObjectId
+        object_ids = [ObjectId(uid) for uid in user_ids]
+        
+        if action == 'delete':
+            # Delete users
+            mongo.db.users.delete_many({'_id': {'$in': object_ids}})
+            # Delete their orders
+            mongo.db.orders.delete_many({'user_id': {'$in': object_ids}})
+        elif action == 'activate':
+            mongo.db.users.update_many(
+                {'_id': {'$in': object_ids}},
+                {'$set': {'status': 'active'}}
+            )
+        elif action == 'deactivate':
+            mongo.db.users.update_many(
+                {'_id': {'$in': object_ids}},
+                {'$set': {'status': 'inactive'}}
+            )
+        
+        # Emit user update event
+        emit_user_update()
+        
+        return jsonify({'success': True})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/admin/users/stats', methods=['GET'])
+@login_required
+@admin_required
+def get_user_stats():
+    try:
+        total_users = mongo.db.users.count_documents({})
+        active_users = mongo.db.users.count_documents({
+            'last_activity': {'$gte': datetime.now() - timedelta(days=30)}
+        })
+        new_users_today = mongo.db.users.count_documents({
+            'created_at': {'$gte': datetime.now().replace(hour=0, minute=0, second=0)}
+        })
+        online_users = mongo.db.users.count_documents({
+            'last_activity': {'$gte': datetime.now() - timedelta(minutes=5)}
+        })
+        
+        stats = {
+            'total_users': total_users,
+            'active_users': active_users,
+            'new_users_today': new_users_today,
+            'online_users': online_users
+        }
+        
+        return jsonify(stats)
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/admin/users/<user_id>/activity', methods=['GET'])
+@login_required
+@admin_required
+def get_user_activity(user_id):
+    try:
+        # Get user's recent activity
+        recent_actions = list(mongo.db.user_actions.find(
+            {'user': user_id},
+            {'_id': 0}
+        ).sort('timestamp', -1).limit(10))
+        
+        # Format timestamps
+        for action in recent_actions:
+            action['timestamp'] = action['timestamp'].strftime('%Y-%m-%d %H:%M:%S')
+        
+        return jsonify(recent_actions)
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/admin/users/<user_id>/orders', methods=['GET'])
+@login_required
+@admin_required
+def get_user_orders(user_id):
+    try:
+        # Get user's orders
+        orders = list(mongo.db.orders.find(
+            {'user_id': ObjectId(user_id)},
+            {'_id': 0}
+        ).sort('created_at', -1).limit(10))
+        
+        # Format timestamps and ObjectIds
+        for order in orders:
+            order['created_at'] = order['created_at'].strftime('%Y-%m-%d %H:%M:%S')
+            if 'items' in order:
+                for item in order['items']:
+                    item['id'] = str(item['id'])
+        
+        return jsonify(orders)
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@socketio.on('user_connect')
+def handle_user_connect():
+    """Handle user connection for real-time updates"""
+    if current_user.is_authenticated and current_user.has_role('admin'):
+        join_room('admin_analytics')
+        # Send initial user stats
+        with app.app_context():
+            stats = get_realtime_user_stats()
+            emit('user_stats_update', stats, room='admin_analytics')
+
+def get_realtime_user_stats():
+    """Get real-time user statistics"""
+    total_users = mongo.db.users.count_documents({})
+    active_users = mongo.db.users.count_documents({
+        'last_activity': {'$gte': datetime.now() - timedelta(days=30)}
+    })
+    new_users_today = mongo.db.users.count_documents({
+        'created_at': {'$gte': datetime.now().replace(hour=0, minute=0, second=0)}
+    })
+    online_users = mongo.db.users.count_documents({
+        'last_activity': {'$gte': datetime.now() - timedelta(minutes=5)}
+    })
     
-    if not user_ids or not action:
-        return jsonify({'error': 'Missing required parameters'}), 400
-    
-    # Convert string IDs to ObjectId
-    object_ids = [ObjectId(uid) for uid in user_ids]
-    
-    if action == 'delete':
-        # Delete users
-        mongo.db.users.delete_many({'_id': {'$in': object_ids}})
-        # Delete their orders
-        mongo.db.orders.delete_many({'user_id': {'$in': object_ids}})
-    elif action == 'activate':
-        mongo.db.users.update_many(
-            {'_id': {'$in': object_ids}},
-            {'$set': {'status': 'active'}}
+    return {
+        'total_users': total_users,
+        'active_users': active_users,
+        'new_users_today': new_users_today,
+        'online_users': online_users
+    }
+
+def emit_user_update():
+    """Emit user update to admin clients"""
+    with app.app_context():
+        stats = get_realtime_user_stats()
+        socketio.emit('user_stats_update', stats, room='admin_analytics')
+
+# Menu API Routes
+@app.route('/api/admin/menu', methods=['POST'])
+@login_required
+@admin_required
+def add_menu_item():
+    try:
+        data = request.form.to_dict()
+        images = request.files.getlist('images')
+        
+        # Save images and get their URLs
+        image_urls = []
+        for image in images:
+            if image:
+                filename = secure_filename(image.filename)
+                filepath = os.path.join(app.config['UPLOAD_FOLDER'], 'menu', filename)
+                os.makedirs(os.path.dirname(filepath), exist_ok=True)
+                image.save(filepath)
+                image_urls.append(url_for('static', filename=f'uploads/menu/{filename}'))
+        
+        # Prepare menu item data
+        menu_item = {
+            'name': data['name'],
+            'description': data['description'],
+            'price': float(data['price']),
+            'category': data['category'],
+            'active': data['active'].lower() == 'true',
+            'images': image_urls,
+            'created_at': datetime.now(),
+            'orders_count': 0
+        }
+        
+        # Insert into database
+        result = mongo.db.menu.insert_one(menu_item)
+        
+        # Emit menu update
+        emit_menu_update()
+        
+        return jsonify({'success': True, 'item_id': str(result.inserted_id)})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/admin/menu/<item_id>', methods=['GET'])
+@login_required
+@admin_required
+def get_menu_item(item_id):
+    try:
+        item = mongo.db.menu.find_one({'_id': ObjectId(item_id)})
+        if item:
+            item['_id'] = str(item['_id'])
+            return jsonify(item)
+        return jsonify({'error': 'Item not found'}), 404
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/admin/menu/<item_id>', methods=['PUT'])
+@login_required
+@admin_required
+def update_menu_item(item_id):
+    try:
+        data = request.form.to_dict()
+        images = request.files.getlist('images')
+        
+        # Get existing item
+        item = mongo.db.menu.find_one({'_id': ObjectId(item_id)})
+        if not item:
+            return jsonify({'error': 'Item not found'}), 404
+        
+        # Handle new images
+        image_urls = item.get('images', [])
+        for image in images:
+            if image:
+                filename = secure_filename(image.filename)
+                filepath = os.path.join(app.config['UPLOAD_FOLDER'], 'menu', filename)
+                os.makedirs(os.path.dirname(filepath), exist_ok=True)
+                image.save(filepath)
+                image_urls.append(url_for('static', filename=f'uploads/menu/{filename}'))
+        
+        # Update menu item
+        updates = {
+            'name': data['name'],
+            'description': data['description'],
+            'price': float(data['price']),
+            'category': data['category'],
+            'active': data['active'].lower() == 'true',
+            'images': image_urls,
+            'updated_at': datetime.now()
+        }
+        
+        mongo.db.menu.update_one(
+            {'_id': ObjectId(item_id)},
+            {'$set': updates}
         )
-    elif action == 'deactivate':
-        mongo.db.users.update_many(
-            {'_id': {'$in': object_ids}},
-            {'$set': {'status': 'inactive'}}
-        )
-    
-    # Emit user update event
-    emit_user_update()
-    
-    return jsonify({'message': f'Bulk action {action} completed successfully'})
+        
+        # Emit menu update
+        emit_menu_update()
+        
+        return jsonify({'success': True})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/admin/menu/<item_id>', methods=['DELETE'])
+@login_required
+@admin_required
+def delete_menu_item(item_id):
+    try:
+        # Check if item exists
+        item = mongo.db.menu.find_one({'_id': ObjectId(item_id)})
+        if not item:
+            return jsonify({'error': 'Item not found'}), 404
+        
+        # Delete item
+        mongo.db.menu.delete_one({'_id': ObjectId(item_id)})
+        
+        # Emit menu update
+        emit_menu_update()
+        
+        return jsonify({'success': True})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/admin/menu/<item_id>/check-orders', methods=['GET'])
+@login_required
+@admin_required
+def check_menu_item_orders(item_id):
+    try:
+        active_orders = mongo.db.orders.count_documents({
+            'items.id': ObjectId(item_id),
+            'status': {'$nin': ['delivered', 'cancelled']}
+        })
+        return jsonify({'active_orders': active_orders})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/admin/menu/bulk-action', methods=['POST'])
+@login_required
+@admin_required
+def bulk_menu_action():
+    try:
+        data = request.json
+        item_ids = data.get('item_ids', [])
+        action = data.get('action')
+        
+        if not item_ids or not action:
+            return jsonify({'error': 'Missing required parameters'}), 400
+        
+        # Convert string IDs to ObjectId
+        object_ids = [ObjectId(iid) for iid in item_ids]
+        
+        if action == 'delete':
+            mongo.db.menu.delete_many({'_id': {'$in': object_ids}})
+        elif action == 'activate':
+            mongo.db.menu.update_many(
+                {'_id': {'$in': object_ids}},
+                {'$set': {'active': True}}
+            )
+        elif action == 'deactivate':
+            mongo.db.menu.update_many(
+                {'_id': {'$in': object_ids}},
+                {'$set': {'active': False}}
+            )
+        
+        # Emit menu update
+        emit_menu_update()
+        
+        return jsonify({'success': True})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/admin/menu/search', methods=['GET'])
+@login_required
+@admin_required
+def search_menu_items():
+    try:
+        query = request.args.get('q', '').strip()
+        category = request.args.get('category', 'all')
+        
+        # Build search query
+        search_query = {}
+        if query:
+            search_query['$or'] = [
+                {'name': {'$regex': query, '$options': 'i'}},
+                {'description': {'$regex': query, '$options': 'i'}}
+            ]
+        if category != 'all':
+            search_query['category'] = category
+        
+        # Get matching items
+        items = list(mongo.db.menu.find(search_query))
+        
+        # Convert ObjectId to string
+        for item in items:
+            item['_id'] = str(item['_id'])
+        
+        return jsonify(items)
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+def emit_menu_update():
+    """Emit menu update to all admin clients"""
+    with app.app_context():
+        menu_stats = {
+            'total_items': mongo.db.menu.count_documents({}),
+            'active_items': mongo.db.menu.count_documents({'active': True}),
+            'categories': len(mongo.db.menu.distinct('category')),
+        }
+        
+        # Get top seller
+        try:
+            top_seller = mongo.db.orders.aggregate([
+                {'$unwind': '$items'},
+                {'$group': {
+                    '_id': '$items.id',
+                    'name': {'$first': '$items.name'},
+                    'count': {'$sum': '$items.quantity'}
+                }},
+                {'$sort': {'count': -1}},
+                {'$limit': 1}
+            ]).next()
+            menu_stats['top_seller_orders'] = top_seller['count']
+            menu_stats['top_seller_name'] = top_seller['name']
+        except StopIteration:
+            menu_stats['top_seller_orders'] = 0
+            menu_stats['top_seller_name'] = 'No orders yet'
+        
+        socketio.emit('menu_update', {'stats': menu_stats}, room='admin_analytics')
+
+# Configure upload folder
+app.config['UPLOAD_FOLDER'] = os.path.join(app.static_folder, 'uploads')
+app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB max file size
+
+# Create upload folders if they don't exist
+os.makedirs(os.path.join(app.config['UPLOAD_FOLDER'], 'menu'), exist_ok=True)
 
 if __name__ == '__main__':
     socketio.run(app, debug=True) 

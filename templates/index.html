@@ -1,0 +1,181 @@
+{% extends "base.html" %}
+
+{% block content %}
+<!-- Hero Section -->
+<div class="relative h-screen -mt-16 mb-16">
+    <div class="absolute inset-0">
+        <img src="https://images.unsplash.com/photo-1504674900247-0877df9cc836?auto=format&fit=crop&q=80" 
+             alt="Hero Image" 
+             class="w-full h-full object-cover">
+        <div class="absolute inset-0 bg-gradient-to-r from-black/80 to-black/40"></div>
+    </div>
+    <div class="relative h-full flex items-center">
+        <div class="container mx-auto px-4">
+            <div class="max-w-3xl">
+                <h1 class="text-6xl font-bold mb-6 text-white leading-tight">
+                    Experience the <span class="text-primary">Finest</span><br>
+                    Food Delivery
+                </h1>
+                <p class="text-xl mb-8 text-gray-200">Discover exceptional cuisines from top-rated restaurants, delivered right to your doorstep with unmatched quality and service.</p>
+                <div class="space-x-4">
+                    <a href="#menu" class="bg-primary text-white px-8 py-4 rounded-full hover:bg-opacity-90 inline-flex items-center text-lg font-semibold transition-all hover:translate-y-[-2px]">
+                        <i class="fas fa-utensils mr-2"></i> Explore Menu
+                    </a>
+                    <a href="#featured" class="bg-white text-primary px-8 py-4 rounded-full hover:bg-gray-100 inline-flex items-center text-lg font-semibold transition-all hover:translate-y-[-2px]">
+                        <i class="fas fa-fire mr-2"></i> Popular Items
+                    </a>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="absolute bottom-0 left-0 right-0">
+        <svg class="w-full h-24 text-white" viewBox="0 0 1440 74" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <path d="M0 24C480 74 960 74 1440 24V74H0V24Z" fill="currentColor"/>
+        </svg>
+    </div>
+</div>
+
+<!-- Categories Section -->
+<section class="py-20 bg-white">
+    <div class="container mx-auto px-4">
+        <div class="flex justify-between items-center mb-12">
+            <h2 class="text-4xl font-bold">Popular Categories</h2>
+            <a href="#" class="text-primary hover:text-opacity-80 flex items-center font-semibold">
+                View All <i class="fas fa-arrow-right ml-2"></i>
+            </a>
+        </div>
+        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-8">
+            <a href="#" class="group">
+                <div class="relative h-64 rounded-2xl overflow-hidden shadow-lg hover-card">
+                    <img src="https://images.unsplash.com/photo-1513104890138-7c749659a591?auto=format&fit=crop&q=80" 
+                         alt="Pizza" 
+                         class="w-full h-full object-cover group-hover:scale-110 transition-transform duration-500">
+                    <div class="absolute inset-0 bg-gradient-to-t from-black/80 to-transparent"></div>
+                    <div class="absolute bottom-6 left-6">
+                        <h3 class="text-white text-2xl font-bold mb-1">Pizza</h3>
+                        <div class="flex items-center text-white/90">
+                            <span class="text-primary mr-2">20+</span> varieties available
+                        </div>
+                    </div>
+                </div>
+            </a>
+            <a href="#" class="group">
+                <div class="relative h-64 rounded-2xl overflow-hidden shadow-lg hover-card">
+                    <img src="https://images.unsplash.com/photo-1568901346375-23c9450c58cd?auto=format&fit=crop&q=80" 
+                         alt="Burgers" 
+                         class="w-full h-full object-cover group-hover:scale-110 transition-transform duration-500">
+                    <div class="absolute inset-0 bg-gradient-to-t from-black/80 to-transparent"></div>
+                    <div class="absolute bottom-6 left-6">
+                        <h3 class="text-white text-2xl font-bold mb-1">Burgers</h3>
+                        <div class="flex items-center text-white/90">
+                            <span class="text-primary mr-2">15+</span> varieties available
+                        </div>
+                    </div>
+                </div>
+            </a>
+            <a href="#" class="group">
+                <div class="relative h-64 rounded-2xl overflow-hidden shadow-lg hover-card">
+                    <img src="https://images.unsplash.com/photo-1512621776951-a57141f2eefd?auto=format&fit=crop&q=80" 
+                         alt="Salads" 
+                         class="w-full h-full object-cover group-hover:scale-110 transition-transform duration-500">
+                    <div class="absolute inset-0 bg-gradient-to-t from-black/80 to-transparent"></div>
+                    <div class="absolute bottom-6 left-6">
+                        <h3 class="text-white text-2xl font-bold mb-1">Salads</h3>
+                        <div class="flex items-center text-white/90">
+                            <span class="text-primary mr-2">12+</span> varieties available
+                        </div>
+                    </div>
+                </div>
+            </a>
+            <a href="#" class="group">
+                <div class="relative h-64 rounded-2xl overflow-hidden shadow-lg hover-card">
+                    <img src="https://images.unsplash.com/photo-1563729784474-d77dbb933a9e?auto=format&fit=crop&q=80" 
+                         alt="Desserts" 
+                         class="w-full h-full object-cover group-hover:scale-110 transition-transform duration-500">
+                    <div class="absolute inset-0 bg-gradient-to-t from-black/80 to-transparent"></div>
+                    <div class="absolute bottom-6 left-6">
+                        <h3 class="text-white text-2xl font-bold mb-1">Desserts</h3>
+                        <div class="flex items-center text-white/90">
+                            <span class="text-primary mr-2">18+</span> varieties available
+                        </div>
+                    </div>
+                </div>
+            </a>
+        </div>
+    </div>
+</section>
+
+<!-- Featured Items Section -->
+<section id="featured" class="py-20 bg-gray-50">
+    <div class="container mx-auto px-4">
+        <div class="flex justify-between items-center mb-12">
+            <h2 class="text-4xl font-bold">Featured Items</h2>
+            <div class="flex space-x-3">
+                <button class="p-3 rounded-full bg-white shadow-md hover:bg-primary hover:text-white transition-colors">
+                    <i class="fas fa-chevron-left"></i>
+                </button>
+                <button class="p-3 rounded-full bg-white shadow-md hover:bg-primary hover:text-white transition-colors">
+                    <i class="fas fa-chevron-right"></i>
+                </button>
+            </div>
+        </div>
+        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-8">
+            {% for item in featured_items %}
+            <div class="bg-white rounded-2xl shadow-lg overflow-hidden group hover-card">
+                <div class="relative h-56">
+                    <img src="{{ item.image_url }}" alt="{{ item.name }}" 
+                         class="w-full h-full object-cover group-hover:scale-110 transition-transform duration-500">
+                    <div class="absolute top-4 right-4">
+                        <span class="bg-primary text-white px-3 py-1 rounded-full text-sm font-semibold">
+                            Featured
+                        </span>
+                    </div>
+                </div>
+                <div class="p-6">
+                    <h3 class="text-xl font-bold mb-2">{{ item.name }}</h3>
+                    <p class="text-gray-600 text-sm mb-4">{{ item.description }}</p>
+                    <div class="flex justify-between items-center">
+                        <span class="text-2xl font-bold text-primary">${{ "%.2f"|format(item.price) }}</span>
+                        <button onclick="addToCart('{{ item._id }}', '{{ item.name }}', {{ item.price }})"
+                                class="bg-primary text-white px-6 py-2 rounded-full hover:bg-opacity-90 transition-all hover:translate-y-[-2px] flex items-center">
+                            <i class="fas fa-shopping-cart mr-2"></i>
+                            Add to Cart
+                        </button>
+                    </div>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+</section>
+
+<!-- Why Choose Us Section -->
+<section class="py-20 bg-white">
+    <div class="container mx-auto px-4">
+        <h2 class="text-4xl font-bold mb-16 text-center">Why Choose Us</h2>
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-12">
+            <div class="text-center group">
+                <div class="w-20 h-20 bg-primary/10 rounded-2xl flex items-center justify-center mx-auto mb-6 group-hover:bg-primary/20 transition-colors">
+                    <i class="fas fa-truck text-3xl text-primary"></i>
+                </div>
+                <h3 class="text-2xl font-bold mb-4">Fast Delivery</h3>
+                <p class="text-gray-600 leading-relaxed">Experience lightning-fast delivery with our dedicated fleet of delivery partners, ensuring your food arrives hot and fresh.</p>
+            </div>
+            <div class="text-center group">
+                <div class="w-20 h-20 bg-primary/10 rounded-2xl flex items-center justify-center mx-auto mb-6 group-hover:bg-primary/20 transition-colors">
+                    <i class="fas fa-star text-3xl text-primary"></i>
+                </div>
+                <h3 class="text-2xl font-bold mb-4">Best Quality</h3>
+                <p class="text-gray-600 leading-relaxed">We partner with only the finest restaurants and chefs to bring you exceptional culinary experiences every time.</p>
+            </div>
+            <div class="text-center group">
+                <div class="w-20 h-20 bg-primary/10 rounded-2xl flex items-center justify-center mx-auto mb-6 group-hover:bg-primary/20 transition-colors">
+                    <i class="fas fa-headset text-3xl text-primary"></i>
+                </div>
+                <h3 class="text-2xl font-bold mb-4">24/7 Support</h3>
+                <p class="text-gray-600 leading-relaxed">Our dedicated customer support team is available around the clock to assist you with any questions or concerns.</p>
+            </div>
+        </div>
+    </div>
+</section>
+{% endblock %} 

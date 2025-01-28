@@ -1,0 +1,210 @@
+{% extends "base.html" %}
+
+{% block content %}
+<!-- Menu Header -->
+<div class="bg-gray-900 text-white py-20">
+    <div class="container mx-auto px-4">
+        <h1 class="text-5xl font-bold mb-4">Our Menu</h1>
+        <p class="text-xl text-gray-300">Discover our wide selection of delicious dishes</p>
+    </div>
+</div>
+
+<!-- Menu Content -->
+<div class="container mx-auto px-4 py-12">
+    <div class="flex flex-col lg:flex-row gap-8">
+        <!-- Filters Sidebar -->
+        <div class="lg:w-1/4">
+            <div class="bg-white rounded-2xl shadow-lg p-6 sticky top-24">
+                <div class="flex items-center justify-between mb-6">
+                    <h2 class="text-xl font-bold">Filters</h2>
+                    <button onclick="resetFilters()" class="text-primary hover:text-opacity-80 text-sm font-medium">
+                        Reset All
+                    </button>
+                </div>
+
+                <!-- Search -->
+                <div class="mb-6">
+                    <label class="block text-sm font-medium text-gray-700 mb-2">Search</label>
+                    <div class="relative">
+                        <input type="text" id="menu-search" placeholder="Search dishes..." 
+                               class="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-primary focus:border-primary"
+                               value="{{ request.args.get('search', '') }}">
+                        <div class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                            <i class="fas fa-search text-gray-400"></i>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Categories -->
+                <div class="mb-6">
+                    <label class="block text-sm font-medium text-gray-700 mb-2">Categories</label>
+                    <div class="space-y-2">
+                        {% for category in categories %}
+                        <label class="flex items-center">
+                            <input type="radio" name="category" value="{{ category }}"
+                                   {% if category == current_category %}checked{% endif %}
+                                   class="h-4 w-4 text-primary focus:ring-primary border-gray-300">
+                            <span class="ml-2 text-gray-700">{{ category|title }}</span>
+                        </label>
+                        {% endfor %}
+                    </div>
+                </div>
+
+                <!-- Dietary Preferences -->
+                <div class="mb-6">
+                    <label class="block text-sm font-medium text-gray-700 mb-2">Dietary Preferences</label>
+                    <div class="space-y-2">
+                        {% for pref in dietary_preferences %}
+                        <label class="flex items-center">
+                            <input type="radio" name="dietary" value="{{ pref }}"
+                                   {% if pref == current_dietary %}checked{% endif %}
+                                   class="h-4 w-4 text-primary focus:ring-primary border-gray-300">
+                            <span class="ml-2 text-gray-700">{{ pref|replace('_', ' ')|title }}</span>
+                        </label>
+                        {% endfor %}
+                    </div>
+                </div>
+
+                <!-- Sort -->
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-2">Sort By</label>
+                    <select id="sort" class="w-full border-gray-300 rounded-lg focus:ring-primary focus:border-primary">
+                        <option value="name" {% if current_sort == 'name' %}selected{% endif %}>Name (A-Z)</option>
+                        <option value="price_asc" {% if current_sort == 'price_asc' %}selected{% endif %}>Price (Low to High)</option>
+                        <option value="price_desc" {% if current_sort == 'price_desc' %}selected{% endif %}>Price (High to Low)</option>
+                    </select>
+                </div>
+            </div>
+        </div>
+
+        <!-- Menu Items Grid -->
+        <div class="lg:w-3/4">
+            <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
+                {% for item in menu_items %}
+                <div class="bg-white rounded-2xl shadow-lg overflow-hidden group hover-card">
+                    <div class="relative h-48">
+                        <img src="{{ item.image_url }}" alt="{{ item.name }}" 
+                             class="w-full h-full object-cover group-hover:scale-110 transition-transform duration-500">
+                        {% if item.dietary_info.vegetarian %}
+                        <div class="absolute top-4 left-4">
+                            <span class="bg-green-500 text-white px-2 py-1 rounded-full text-xs font-semibold">
+                                Vegetarian
+                            </span>
+                        </div>
+                        {% endif %}
+                        {% if item.dietary_info.vegan %}
+                        <div class="absolute top-4 left-24">
+                            <span class="bg-green-600 text-white px-2 py-1 rounded-full text-xs font-semibold">
+                                Vegan
+                            </span>
+                        </div>
+                        {% endif %}
+                    </div>
+                    <div class="p-6">
+                        <div class="flex justify-between items-start mb-2">
+                            <h3 class="text-lg font-bold">{{ item.name }}</h3>
+                            <span class="text-xl font-bold text-primary">${{ "%.2f"|format(item.price) }}</span>
+                        </div>
+                        <p class="text-gray-600 text-sm mb-4">{{ item.description }}</p>
+                        <div class="flex items-center justify-between">
+                            <div class="flex items-center space-x-2">
+                                <button onclick="decrementQuantity('{{ item._id }}')"
+                                        class="w-8 h-8 rounded-full bg-gray-100 hover:bg-gray-200 flex items-center justify-center transition-colors">
+                                    <i class="fas fa-minus text-gray-600"></i>
+                                </button>
+                                <input type="number" id="quantity-{{ item._id }}" value="1" min="1"
+                                       class="w-12 text-center border-gray-200 rounded-lg focus:ring-primary focus:border-primary">
+                                <button onclick="incrementQuantity('{{ item._id }}')"
+                                        class="w-8 h-8 rounded-full bg-gray-100 hover:bg-gray-200 flex items-center justify-center transition-colors">
+                                    <i class="fas fa-plus text-gray-600"></i>
+                                </button>
+                            </div>
+                            <button onclick="addToCart('{{ item._id }}', '{{ item.name }}', {{ item.price }})"
+                                    class="bg-primary text-white px-4 py-2 rounded-full hover:bg-opacity-90 transition-all hover:translate-y-[-2px] flex items-center">
+                                <i class="fas fa-shopping-cart mr-2"></i>
+                                Add to Cart
+                            </button>
+                        </div>
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+function resetFilters() {
+    window.location.href = "{{ url_for('menu') }}";
+}
+
+function updateFilters() {
+    const category = document.querySelector('input[name="category"]:checked')?.value || '';
+    const dietary = document.querySelector('input[name="dietary"]:checked')?.value || '';
+    const sort = document.getElementById('sort').value;
+    const search = document.getElementById('menu-search').value;
+
+    let url = "{{ url_for('menu') }}?";
+    if (category) url += `category=${category}&`;
+    if (dietary) url += `dietary=${dietary}&`;
+    if (sort) url += `sort=${sort}&`;
+    if (search) url += `search=${search}&`;
+
+    window.location.href = url.slice(0, -1);
+}
+
+// Event listeners for filters
+document.querySelectorAll('input[name="category"], input[name="dietary"]').forEach(input => {
+    input.addEventListener('change', updateFilters);
+});
+
+document.getElementById('sort').addEventListener('change', updateFilters);
+
+let searchTimeout;
+document.getElementById('menu-search').addEventListener('input', (e) => {
+    clearTimeout(searchTimeout);
+    searchTimeout = setTimeout(updateFilters, 500);
+});
+
+function incrementQuantity(itemId) {
+    const input = document.getElementById(`quantity-${itemId}`);
+    input.value = parseInt(input.value) + 1;
+}
+
+function decrementQuantity(itemId) {
+    const input = document.getElementById(`quantity-${itemId}`);
+    if (parseInt(input.value) > 1) {
+        input.value = parseInt(input.value) - 1;
+    }
+}
+
+function addToCart(itemId, itemName, price) {
+    const quantity = parseInt(document.getElementById(`quantity-${itemId}`).value);
+    // Get existing cart from localStorage or initialize empty array
+    const cart = JSON.parse(localStorage.getItem('cart') || '[]');
+    
+    // Check if item already exists in cart
+    const existingItem = cart.find(item => item.id === itemId);
+    
+    if (existingItem) {
+        existingItem.quantity += quantity;
+    } else {
+        cart.push({
+            id: itemId,
+            name: itemName,
+            price: price,
+            quantity: quantity
+        });
+    }
+    
+    // Save updated cart
+    localStorage.setItem('cart', JSON.stringify(cart));
+    
+    // Show success message
+    showToast(`${quantity} x ${itemName} added to cart!`);
+    
+    // Update cart count in UI
+    updateCartCount();
+}
+</script>
+{% endblock %} 

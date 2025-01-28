@@ -1,0 +1,228 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="bg-gray-100 min-h-screen py-12">
+    <div class="container mx-auto px-4">
+        <div class="flex flex-col lg:flex-row gap-8">
+            <!-- Cart Items -->
+            <div class="lg:w-2/3">
+                <div class="bg-white rounded-2xl shadow-lg p-6">
+                    <div class="flex items-center justify-between mb-6">
+                        <h2 class="text-2xl font-bold">Shopping Cart</h2>
+                        <span id="cart-count" class="text-gray-500"></span>
+                    </div>
+                    
+                    <div id="cart-items" class="divide-y divide-gray-200">
+                        <!-- Cart items will be dynamically inserted here -->
+                    </div>
+
+                    <div id="empty-cart-message" class="text-center py-8 hidden">
+                        <i class="fas fa-shopping-cart text-gray-400 text-4xl mb-4"></i>
+                        <p class="text-gray-500">Your cart is empty</p>
+                        <a href="{{ url_for('menu') }}" class="mt-4 inline-flex items-center text-primary hover:text-opacity-80">
+                            <i class="fas fa-arrow-left mr-2"></i>
+                            Continue Shopping
+                        </a>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Order Summary -->
+            <div class="lg:w-1/3">
+                <div class="bg-white rounded-2xl shadow-lg p-6 sticky top-24">
+                    <h3 class="text-xl font-bold mb-4">Order Summary</h3>
+                    <div class="space-y-3 mb-6">
+                        <div class="flex justify-between">
+                            <span class="text-gray-600">Subtotal</span>
+                            <span id="subtotal" class="font-semibold">$0.00</span>
+                        </div>
+                        <div class="flex justify-between">
+                            <span class="text-gray-600">Tax (10%)</span>
+                            <span id="tax" class="font-semibold">$0.00</span>
+                        </div>
+                        <div class="flex justify-between">
+                            <span class="text-gray-600">Delivery Fee</span>
+                            <span id="delivery-fee" class="font-semibold">$5.00</span>
+                        </div>
+                        <div class="border-t pt-3">
+                            <div class="flex justify-between">
+                                <span class="font-bold">Total</span>
+                                <span id="total" class="font-bold text-xl">$0.00</span>
+                            </div>
+                        </div>
+                    </div>
+                    <button onclick="proceedToCheckout()" 
+                            class="w-full bg-primary text-white py-3 rounded-lg hover:bg-opacity-90 transition-all flex items-center justify-center space-x-2">
+                        <span>Proceed to Checkout</span>
+                        <i class="fas fa-arrow-right"></i>
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Cart Item Template -->
+<template id="cart-item-template">
+    <div class="cart-item py-6 flex items-center">
+        <img class="h-20 w-20 object-cover rounded-lg" src="" alt="">
+        <div class="ml-4 flex-1">
+            <h4 class="text-lg font-semibold"></h4>
+            <div class="flex items-center mt-2">
+                <div class="flex items-center space-x-2">
+                    <button onclick="decrementQuantity(this)" 
+                            class="w-8 h-8 rounded-full bg-gray-100 hover:bg-gray-200 flex items-center justify-center transition-colors">
+                        <i class="fas fa-minus text-gray-600"></i>
+                    </button>
+                    <input type="number" value="1" min="1" 
+                           class="w-12 text-center border-gray-200 rounded-lg focus:ring-primary focus:border-primary"
+                           onchange="updateQuantity(this)">
+                    <button onclick="incrementQuantity(this)"
+                            class="w-8 h-8 rounded-full bg-gray-100 hover:bg-gray-200 flex items-center justify-center transition-colors">
+                        <i class="fas fa-plus text-gray-600"></i>
+                    </button>
+                </div>
+            </div>
+        </div>
+        <div class="ml-4 flex flex-col items-end">
+            <span class="text-lg font-semibold item-price"></span>
+            <button onclick="removeFromCart(this)" 
+                    class="mt-2 text-red-500 hover:text-red-600 transition-colors flex items-center">
+                <i class="fas fa-trash mr-1"></i>
+                Remove
+            </button>
+        </div>
+    </div>
+</template>
+
+<script>
+let cart = [];
+
+function formatPrice(price) {
+    return '$' + price.toFixed(2);
+}
+
+function updateCartUI() {
+    const cartItemsContainer = document.getElementById('cart-items');
+    const emptyCartMessage = document.getElementById('empty-cart-message');
+    const template = document.getElementById('cart-item-template');
+    
+    cartItemsContainer.innerHTML = '';
+    
+    if (cart.length === 0) {
+        emptyCartMessage.classList.remove('hidden');
+        return;
+    }
+    
+    emptyCartMessage.classList.add('hidden');
+    
+    cart.forEach(item => {
+        const clone = template.content.cloneNode(true);
+        const itemElement = clone.querySelector('.cart-item');
+        
+        itemElement.dataset.id = item.id;
+        itemElement.querySelector('img').src = item.image_url;
+        itemElement.querySelector('img').alt = item.name;
+        itemElement.querySelector('h4').textContent = item.name;
+        itemElement.querySelector('input').value = item.quantity;
+        itemElement.querySelector('.item-price').textContent = formatPrice(item.price * item.quantity);
+        
+        cartItemsContainer.appendChild(itemElement);
+    });
+    
+    updateTotals();
+}
+
+function updateTotals() {
+    const subtotal = cart.reduce((sum, item) => sum + (item.price * item.quantity), 0);
+    const tax = subtotal * 0.1;
+    const deliveryFee = 5;
+    const total = subtotal + tax + deliveryFee;
+    
+    document.getElementById('subtotal').textContent = formatPrice(subtotal);
+    document.getElementById('tax').textContent = formatPrice(tax);
+    document.getElementById('delivery-fee').textContent = formatPrice(deliveryFee);
+    document.getElementById('total').textContent = formatPrice(total);
+    document.getElementById('cart-count').textContent = `${cart.length} items`;
+}
+
+function incrementQuantity(button) {
+    const input = button.parentElement.querySelector('input');
+    const itemId = button.closest('.cart-item').dataset.id;
+    const item = cart.find(i => i.id === itemId);
+    
+    if (item) {
+        item.quantity = parseInt(input.value) + 1;
+        input.value = item.quantity;
+        updateCartUI();
+        syncCart();
+    }
+}
+
+function decrementQuantity(button) {
+    const input = button.parentElement.querySelector('input');
+    const itemId = button.closest('.cart-item').dataset.id;
+    const item = cart.find(i => i.id === itemId);
+    
+    if (item && item.quantity > 1) {
+        item.quantity = parseInt(input.value) - 1;
+        input.value = item.quantity;
+        updateCartUI();
+        syncCart();
+    }
+}
+
+function updateQuantity(input) {
+    const itemId = input.closest('.cart-item').dataset.id;
+    const item = cart.find(i => i.id === itemId);
+    
+    if (item) {
+        const newQuantity = parseInt(input.value);
+        if (newQuantity > 0) {
+            item.quantity = newQuantity;
+            updateCartUI();
+            syncCart();
+        } else {
+            input.value = item.quantity;
+        }
+    }
+}
+
+function removeFromCart(button) {
+    const itemId = button.closest('.cart-item').dataset.id;
+    cart = cart.filter(item => item.id !== itemId);
+    updateCartUI();
+    syncCart();
+}
+
+function syncCart() {
+    fetch('/api/cart/sync', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(cart)
+    });
+}
+
+function proceedToCheckout() {
+    if (cart.length === 0) {
+        showToast('Your cart is empty!', 'error');
+        return;
+    }
+    // Implement checkout logic
+    showToast('Checkout functionality coming soon!');
+}
+
+// Load cart data on page load
+document.addEventListener('DOMContentLoaded', async function() {
+    try {
+        const response = await fetch('/api/cart');
+        cart = await response.json();
+        updateCartUI();
+    } catch (error) {
+        console.error('Error loading cart:', error);
+    }
+});
+</script>
+{% endblock %} 

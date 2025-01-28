@@ -1,0 +1,310 @@
+{% extends "admin/base.html" %}
+
+{% block title %}Order Management{% endblock %}
+{% block header %}Order Management{% endblock %}
+
+{% block admin_content %}
+<div class="space-y-6">
+    <!-- Actions Bar -->
+    <div class="flex flex-col md:flex-row justify-between items-center gap-4 mb-6">
+        <div class="flex flex-col md:flex-row items-center gap-4 w-full md:w-auto">
+            <div class="relative w-full md:w-64">
+                <input type="text" id="orderSearch" placeholder="Search orders..." 
+                       class="pl-10 pr-4 py-2 w-full border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent">
+                <i class="fas fa-search absolute left-3 top-3 text-gray-400"></i>
+            </div>
+            <div class="flex items-center space-x-4 w-full md:w-auto">
+                <select id="statusFilter" class="border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent w-full md:w-auto">
+                    <option value="">All Statuses</option>
+                    <option value="pending">Pending</option>
+                    <option value="preparing">Preparing</option>
+                    <option value="out_for_delivery">Out for Delivery</option>
+                    <option value="delivered">Delivered</option>
+                </select>
+                <button onclick="toggleDatePicker()" class="flex items-center px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50">
+                    <i class="fas fa-calendar mr-2"></i>
+                    Date
+                </button>
+            </div>
+        </div>
+        <div class="flex items-center space-x-4 w-full md:w-auto">
+            <button onclick="updateBulkOrders()" class="bg-primary text-white px-4 py-2 rounded-lg hover:bg-opacity-90 w-full md:w-auto">
+                <i class="fas fa-tasks mr-2"></i>
+                Bulk Update
+            </button>
+        </div>
+    </div>
+
+    <!-- Orders Table -->
+    <div class="bg-white rounded-lg shadow-md overflow-hidden">
+        <div class="overflow-x-auto">
+            <table class="min-w-full divide-y divide-gray-200">
+                <thead class="bg-gray-50">
+                    <tr>
+                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                            <input type="checkbox" class="form-checkbox h-4 w-4 text-primary" onclick="toggleAllOrders(this)">
+                        </th>
+                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                            Order ID
+                        </th>
+                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                            Customer
+                        </th>
+                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                            Date
+                        </th>
+                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                            Total
+                        </th>
+                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                            Status
+                        </th>
+                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                            Actions
+                        </th>
+                    </tr>
+                </thead>
+                <tbody class="bg-white divide-y divide-gray-200">
+                    {% for order in orders %}
+                    <tr class="hover:bg-gray-50">
+                        <td class="px-6 py-4 whitespace-nowrap">
+                            <input type="checkbox" class="form-checkbox h-4 w-4 text-primary" value="{{ order._id }}">
+                        </td>
+                        <td class="px-6 py-4 whitespace-nowrap">
+                            <span class="text-sm font-medium text-gray-900">#{{ order._id }}</span>
+                        </td>
+                        <td class="px-6 py-4 whitespace-nowrap">
+                            <div class="flex items-center">
+                                <div>
+                                    <div class="text-sm font-medium text-gray-900">
+                                        {{ order.user_data.name }}
+                                    </div>
+                                    <div class="text-sm text-gray-500">
+                                        {{ order.user_data.email }}
+                                    </div>
+                                </div>
+                            </div>
+                        </td>
+                        <td class="px-6 py-4 whitespace-nowrap">
+                            <div class="text-sm text-gray-900">{{ order.created_at.strftime('%Y-%m-%d') }}</div>
+                            <div class="text-sm text-gray-500">{{ order.created_at.strftime('%H:%M') }}</div>
+                        </td>
+                        <td class="px-6 py-4 whitespace-nowrap">
+                            <div class="text-sm font-medium text-gray-900">${{ "%.2f"|format(order.total) }}</div>
+                        </td>
+                        <td class="px-6 py-4 whitespace-nowrap">
+                            <select onchange="updateOrderStatus('{{ order._id }}', this.value)"
+                                    class="text-sm rounded-full px-3 py-1 font-semibold
+                                    {% if order.status == 'pending' %}
+                                        text-yellow-800 bg-yellow-100
+                                    {% elif order.status == 'preparing' %}
+                                        text-blue-800 bg-blue-100
+                                    {% elif order.status == 'out_for_delivery' %}
+                                        text-purple-800 bg-purple-100
+                                    {% elif order.status == 'delivered' %}
+                                        text-green-800 bg-green-100
+                                    {% endif %}">
+                                <option value="pending" {% if order.status == 'pending' %}selected{% endif %}>
+                                    <i class="fas fa-clock"></i> Pending
+                                </option>
+                                <option value="preparing" {% if order.status == 'preparing' %}selected{% endif %}>
+                                    <i class="fas fa-kitchen-set"></i> Preparing
+                                </option>
+                                <option value="out_for_delivery" {% if order.status == 'out_for_delivery' %}selected{% endif %}>
+                                    <i class="fas fa-truck"></i> Out for Delivery
+                                </option>
+                                <option value="delivered" {% if order.status == 'delivered' %}selected{% endif %}>
+                                    <i class="fas fa-check-circle"></i> Delivered
+                                </option>
+                            </select>
+                        </td>
+                        <td class="px-6 py-4 whitespace-nowrap text-sm font-medium">
+                            <button onclick="viewOrderDetails('{{ order._id }}')" class="text-primary hover:text-opacity-80">
+                                <i class="fas fa-eye"></i>
+                            </button>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<!-- Order Details Modal -->
+<div id="orderDetailsModal" class="fixed inset-0 bg-black bg-opacity-50 hidden items-center justify-center">
+    <div class="bg-white rounded-lg max-w-2xl w-full mx-4 max-h-[90vh] overflow-y-auto">
+        <div class="p-6">
+            <div class="flex justify-between items-center mb-6">
+                <h3 class="text-lg font-bold text-gray-900">Order Details</h3>
+                <button onclick="closeOrderDetails()" class="text-gray-500 hover:text-gray-700">
+                    <i class="fas fa-times"></i>
+                </button>
+            </div>
+            <div id="orderDetailsContent"></div>
+        </div>
+    </div>
+</div>
+
+<!-- Date Picker Modal -->
+<div id="datePickerModal" class="fixed inset-0 bg-black bg-opacity-50 hidden items-center justify-center">
+    <div class="bg-white rounded-lg p-6 max-w-md w-full mx-4">
+        <div class="flex justify-between items-center mb-4">
+            <h3 class="text-lg font-bold text-gray-900">Select Date Range</h3>
+            <button onclick="closeDatePicker()" class="text-gray-500 hover:text-gray-700">
+                <i class="fas fa-times"></i>
+            </button>
+        </div>
+        <div class="space-y-4">
+            <div>
+                <label class="block text-sm font-medium text-gray-700 mb-1">Start Date</label>
+                <input type="date" id="startDate" class="w-full border border-gray-300 rounded-lg px-4 py-2">
+            </div>
+            <div>
+                <label class="block text-sm font-medium text-gray-700 mb-1">End Date</label>
+                <input type="date" id="endDate" class="w-full border border-gray-300 rounded-lg px-4 py-2">
+            </div>
+            <button onclick="applyDateFilter()" class="w-full bg-primary text-white px-4 py-2 rounded-lg hover:bg-opacity-90">
+                Apply Filter
+            </button>
+        </div>
+    </div>
+</div>
+
+<script>
+function toggleAllOrders(checkbox) {
+    document.querySelectorAll('tbody input[type="checkbox"]').forEach(cb => {
+        cb.checked = checkbox.checked;
+    });
+}
+
+function updateOrderStatus(orderId, status) {
+    fetch('/api/admin/update-order-status', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ order_id: orderId, status: status })
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            // Update UI or show success message
+        }
+    })
+    .catch(error => console.error('Error:', error));
+}
+
+function viewOrderDetails(orderId) {
+    fetch(`/api/admin/orders/${orderId}`)
+        .then(response => response.json())
+        .then(order => {
+            const content = document.getElementById('orderDetailsContent');
+            content.innerHTML = `
+                <div class="space-y-6">
+                    <div class="border-b pb-4">
+                        <div class="grid grid-cols-2 gap-4">
+                            <div>
+                                <p class="text-sm text-gray-500">Order ID</p>
+                                <p class="font-medium">#${order._id}</p>
+                            </div>
+                            <div>
+                                <p class="text-sm text-gray-500">Order Date</p>
+                                <p class="font-medium">${new Date(order.created_at).toLocaleString()}</p>
+                            </div>
+                            <div>
+                                <p class="text-sm text-gray-500">Customer</p>
+                                <p class="font-medium">${order.user_data.name}</p>
+                            </div>
+                            <div>
+                                <p class="text-sm text-gray-500">Contact</p>
+                                <p class="font-medium">${order.user_data.email}</p>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="border-b pb-4">
+                        <h4 class="font-medium mb-4">Order Items</h4>
+                        <div class="space-y-3">
+                            ${order.items.map(item => `
+                                <div class="flex justify-between items-center">
+                                    <div>
+                                        <p class="font-medium">${item.name}</p>
+                                        <p class="text-sm text-gray-500">Quantity: ${item.quantity}</p>
+                                    </div>
+                                    <p class="font-medium">$${(item.price * item.quantity).toFixed(2)}</p>
+                                </div>
+                            `).join('')}
+                        </div>
+                    </div>
+                    <div class="flex justify-between items-center font-medium">
+                        <p>Total Amount</p>
+                        <p>$${order.total.toFixed(2)}</p>
+                    </div>
+                    ${order.delivery_instructions ? `
+                        <div class="border-t pt-4">
+                            <p class="text-sm text-gray-500">Delivery Instructions</p>
+                            <p class="mt-1">${order.delivery_instructions}</p>
+                        </div>
+                    ` : ''}
+                </div>
+            `;
+            document.getElementById('orderDetailsModal').classList.remove('hidden');
+            document.getElementById('orderDetailsModal').classList.add('flex');
+        });
+}
+
+function closeOrderDetails() {
+    document.getElementById('orderDetailsModal').classList.add('hidden');
+    document.getElementById('orderDetailsModal').classList.remove('flex');
+}
+
+function toggleDatePicker() {
+    document.getElementById('datePickerModal').classList.remove('hidden');
+    document.getElementById('datePickerModal').classList.add('flex');
+}
+
+function closeDatePicker() {
+    document.getElementById('datePickerModal').classList.add('hidden');
+    document.getElementById('datePickerModal').classList.remove('flex');
+}
+
+function applyDateFilter() {
+    const startDate = document.getElementById('startDate').value;
+    const endDate = document.getElementById('endDate').value;
+    // Implement date filter logic
+    closeDatePicker();
+}
+
+function updateBulkOrders() {
+    const selectedOrders = Array.from(document.querySelectorAll('tbody input[type="checkbox"]:checked'))
+        .map(cb => cb.value);
+    
+    if (selectedOrders.length === 0) {
+        alert('Please select at least one order');
+        return;
+    }
+
+    const status = document.getElementById('statusFilter').value;
+    if (!status) {
+        alert('Please select a status');
+        return;
+    }
+
+    // Implement bulk update logic
+    Promise.all(selectedOrders.map(orderId => 
+        fetch('/api/admin/update-order-status', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ order_id: orderId, status: status })
+        })
+    ))
+    .then(() => {
+        // Refresh the page or update UI
+        location.reload();
+    })
+    .catch(error => console.error('Error:', error));
+}
+</script>
+{% endblock %} 

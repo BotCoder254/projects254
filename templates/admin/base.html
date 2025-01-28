@@ -1,0 +1,107 @@
+{% extends "base.html" %}
+
+{% block head %}
+{{ super() }}
+<script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
+<script src="{{ url_for('static', filename='js/admin.js') }}"></script>
+<link rel="stylesheet" href="{{ url_for('static', filename='css/admin.css') }}">
+{% endblock %}
+
+{% block content %}
+<div class="min-h-screen flex">
+    <!-- Sidebar -->
+    <div class="bg-gray-900 text-white w-64 py-6 flex flex-col">
+        <div class="px-6 mb-8">
+            <div class="flex items-center">
+                <i class="fas fa-utensils text-primary text-2xl mr-2"></i>
+                <span class="font-bold text-xl">Admin Panel</span>
+            </div>
+        </div>
+        
+        <nav class="flex-1">
+            <a href="{{ url_for('admin_dashboard') }}" 
+               class="flex items-center px-6 py-3 text-gray-300 hover:bg-gray-800 hover:text-white
+                      {{ 'bg-gray-800 text-white' if request.endpoint == 'admin_dashboard' }}">
+                <i class="fas fa-tachometer-alt w-5"></i>
+                <span class="ml-3">Dashboard</span>
+            </a>
+            
+            <a href="{{ url_for('admin_menu') }}"
+               class="flex items-center px-6 py-3 text-gray-300 hover:bg-gray-800 hover:text-white
+                      {{ 'bg-gray-800 text-white' if request.endpoint == 'admin_menu' }}">
+                <i class="fas fa-utensils w-5"></i>
+                <span class="ml-3">Menu Management</span>
+            </a>
+            
+            <a href="{{ url_for('admin_orders') }}"
+               class="flex items-center px-6 py-3 text-gray-300 hover:bg-gray-800 hover:text-white
+                      {{ 'bg-gray-800 text-white' if request.endpoint == 'admin_orders' }}">
+                <i class="fas fa-shopping-bag w-5"></i>
+                <span class="ml-3">Orders</span>
+            </a>
+            
+            <a href="{{ url_for('admin_analytics') }}"
+               class="flex items-center px-6 py-3 text-gray-300 hover:bg-gray-800 hover:text-white
+                      {{ 'bg-gray-800 text-white' if request.endpoint == 'admin_analytics' }}">
+                <i class="fas fa-chart-bar w-5"></i>
+                <span class="ml-3">Analytics</span>
+            </a>
+            
+            <a href="{{ url_for('admin_users') }}"
+               class="flex items-center px-6 py-3 text-gray-300 hover:bg-gray-800 hover:text-white
+                      {{ 'bg-gray-800 text-white' if request.endpoint == 'admin_users' }}">
+                <i class="fas fa-users w-5"></i>
+                <span class="ml-3">Users</span>
+            </a>
+        </nav>
+        
+        <div class="px-6 py-4 border-t border-gray-800">
+            <div class="flex items-center">
+                <img src="{{ current_user.user_data.get('avatar_url', url_for('static', filename='img/default-avatar.png')) }}"
+                     class="w-8 h-8 rounded-full mr-3">
+                <div>
+                    <p class="text-sm font-medium">{{ current_user.user_data.name }}</p>
+                    <p class="text-xs text-gray-400">Administrator</p>
+                </div>
+            </div>
+            <a href="{{ url_for('logout') }}" class="mt-4 flex items-center text-gray-300 hover:text-white">
+                <i class="fas fa-sign-out-alt w-5"></i>
+                <span class="ml-3">Logout</span>
+            </a>
+        </div>
+    </div>
+
+    <!-- Main Content -->
+    <div class="flex-1">
+        <!-- Top Navigation -->
+        <header class="bg-white shadow-sm">
+            <div class="flex items-center justify-between px-6 py-4">
+                <h1 class="text-2xl font-bold text-gray-900">{% block header %}Dashboard{% endblock %}</h1>
+                <div class="flex items-center space-x-4">
+                    <button class="text-gray-500 hover:text-gray-700">
+                        <i class="fas fa-bell"></i>
+                    </button>
+                    <button class="text-gray-500 hover:text-gray-700">
+                        <i class="fas fa-cog"></i>
+                    </button>
+                </div>
+            </div>
+        </header>
+
+        <!-- Page Content -->
+        <main class="p-6">
+            {% with messages = get_flashed_messages() %}
+                {% if messages %}
+                    {% for message in messages %}
+                        <div class="bg-yellow-100 border-l-4 border-yellow-500 text-yellow-700 p-4 mb-4" role="alert">
+                            {{ message }}
+                        </div>
+                    {% endfor %}
+                {% endif %}
+            {% endwith %}
+            
+            {% block admin_content %}{% endblock %}
+        </main>
+    </div>
+</div>
+{% endblock %} 

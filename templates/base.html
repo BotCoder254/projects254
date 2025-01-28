@@ -82,6 +82,9 @@
                                 </a>
                             </div>
                         </div>
+                        <a href="{{ url_for('logout') }}" class="text-gray-700 hover:text-primary px-3 py-2 flex items-center">
+                            <i class="fas fa-sign-out-alt"></i>
+                        </a>
                     {% else %}
                         <a href="{{ url_for('login') }}" class="text-gray-700 hover:text-primary px-3 py-2 flex items-center">
                             <i class="fas fa-sign-in-alt mr-2"></i>

@@ -1,0 +1,200 @@
+{% extends "admin/base.html" %}
+
+{% block title %}Dashboard{% endblock %}
+
+{% block admin_content %}
+<div class="space-y-6">
+    <!-- Stats Overview -->
+    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6" id="dashboard-stats">
+        <!-- Total Orders -->
+        <div class="bg-white rounded-xl shadow-sm p-6">
+            <div class="flex items-center justify-between mb-4">
+                <h3 class="text-gray-500 text-sm font-medium">Total Orders</h3>
+                <span class="text-green-500 text-sm font-medium">
+                    <i class="fas fa-arrow-up mr-1"></i>
+                    {{ stats.orders_growth }}%
+                </span>
+            </div>
+            <div class="flex items-center">
+                <div class="flex-1">
+                    <h2 class="text-3xl font-bold text-gray-900" data-stat="total-orders">{{ stats.total_orders }}</h2>
+                    <p class="text-gray-600 text-sm">Orders this month</p>
+                </div>
+                <div class="w-12 h-12 bg-blue-100 rounded-full flex items-center justify-center text-blue-600">
+                    <i class="fas fa-shopping-bag text-xl"></i>
+                </div>
+            </div>
+        </div>
+
+        <!-- Total Revenue -->
+        <div class="bg-white rounded-xl shadow-sm p-6">
+            <div class="flex items-center justify-between mb-4">
+                <h3 class="text-gray-500 text-sm font-medium">Total Revenue</h3>
+                <span class="text-green-500 text-sm font-medium">
+                    <i class="fas fa-arrow-up mr-1"></i>
+                    {{ stats.revenue_growth }}%
+                </span>
+            </div>
+            <div class="flex items-center">
+                <div class="flex-1">
+                    <h2 class="text-3xl font-bold text-gray-900" data-stat="revenue">${{ "%.2f"|format(stats.total_revenue) }}</h2>
+                    <p class="text-gray-600 text-sm">Revenue this month</p>
+                </div>
+                <div class="w-12 h-12 bg-green-100 rounded-full flex items-center justify-center text-green-600">
+                    <i class="fas fa-dollar-sign text-xl"></i>
+                </div>
+            </div>
+        </div>
+
+        <!-- Active Users -->
+        <div class="bg-white rounded-xl shadow-sm p-6">
+            <div class="flex items-center justify-between mb-4">
+                <h3 class="text-gray-500 text-sm font-medium">Active Users</h3>
+                <span class="text-green-500 text-sm font-medium">
+                    <i class="fas fa-arrow-up mr-1"></i>
+                    {{ stats.users_growth }}%
+                </span>
+            </div>
+            <div class="flex items-center">
+                <div class="flex-1">
+                    <h2 class="text-3xl font-bold text-gray-900" data-stat="active-users">{{ stats.active_users }}</h2>
+                    <p class="text-gray-600 text-sm">Active this month</p>
+                </div>
+                <div class="w-12 h-12 bg-purple-100 rounded-full flex items-center justify-center text-purple-600">
+                    <i class="fas fa-users text-xl"></i>
+                </div>
+            </div>
+        </div>
+
+        <!-- Menu Items -->
+        <div class="bg-white rounded-xl shadow-sm p-6">
+            <div class="flex items-center justify-between mb-4">
+                <h3 class="text-gray-500 text-sm font-medium">Menu Items</h3>
+                <span class="text-gray-500 text-sm font-medium">
+                    {{ stats.active_items }} active
+                </span>
+            </div>
+            <div class="flex items-center">
+                <div class="flex-1">
+                    <h2 class="text-3xl font-bold text-gray-900" data-stat="menu-items">{{ stats.menu_items }}</h2>
+                    <p class="text-gray-600 text-sm">Total items</p>
+                </div>
+                <div class="w-12 h-12 bg-orange-100 rounded-full flex items-center justify-center text-orange-600">
+                    <i class="fas fa-utensils text-xl"></i>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Recent Orders and Popular Items -->
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <!-- Recent Orders -->
+        <div class="bg-white rounded-xl shadow-sm">
+            <div class="p-6 border-b border-gray-100">
+                <h3 class="text-lg font-semibold text-gray-900">Recent Orders</h3>
+            </div>
+            <div class="p-6 space-y-6" id="recent-orders">
+                {% for order in recent_orders %}
+                <div class="flex items-center justify-between">
+                    <div class="flex items-center">
+                        <div class="w-10 h-10 rounded-full bg-gray-100 flex items-center justify-center">
+                            <i class="fas fa-receipt text-gray-600"></i>
+                        </div>
+                        <div class="ml-4">
+                            <p class="text-sm font-medium text-gray-900">Order #{{ order._id }}</p>
+                            <p class="text-xs text-gray-600">{{ order.created_at.strftime('%Y-%m-%d %H:%M') }}</p>
+                        </div>
+                    </div>
+                    <div class="text-right">
+                        <p class="text-sm font-medium text-gray-900">${{ "%.2f"|format(order.total) }}</p>
+                        <span class="text-xs px-2 py-1 rounded-full 
+                                   {% if order.status == 'confirmed' %}bg-gray-100 text-gray-800
+                                   {% elif order.status == 'preparing' %}bg-yellow-100 text-yellow-800
+                                   {% elif order.status == 'out_for_delivery' %}bg-blue-100 text-blue-800
+                                   {% else %}bg-green-100 text-green-800{% endif %}">
+                            {{ order.status|title }}
+                        </span>
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+
+        <!-- Popular Items -->
+        <div class="bg-white rounded-xl shadow-sm">
+            <div class="p-6 border-b border-gray-100">
+                <h3 class="text-lg font-semibold text-gray-900">Popular Items</h3>
+            </div>
+            <div class="p-6 space-y-6">
+                {% for item in popular_items %}
+                <div class="flex items-center justify-between">
+                    <div class="flex items-center">
+                        <img src="{{ item.image_url }}" alt="{{ item.name }}" 
+                             class="w-10 h-10 rounded-lg object-cover">
+                        <div class="ml-4">
+                            <p class="text-sm font-medium text-gray-900">{{ item.name }}</p>
+                            <p class="text-xs text-gray-600">{{ item.category }}</p>
+                        </div>
+                    </div>
+                    <div class="text-right">
+                        <p class="text-sm font-medium text-gray-900">${{ "%.2f"|format(item.price) }}</p>
+                        <p class="text-xs text-gray-600">{{ item.orders_count }} orders</p>
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+    </div>
+
+    <!-- Sales Chart -->
+    <div class="bg-white rounded-xl shadow-sm p-6">
+        <h3 class="text-lg font-semibold text-gray-900 mb-6">Sales Overview</h3>
+        <canvas id="salesChart" height="100"></canvas>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script>
+    // Initialize sales chart
+    const ctx = document.getElementById('salesChart').getContext('2d');
+    window.salesChart = new Chart(ctx, {
+        type: 'line',
+        data: {
+            labels: {{ chart_data.labels|tojson }},
+            datasets: [{
+                label: 'Daily Sales',
+                data: {{ chart_data.sales|tojson }},
+                borderColor: '#FF6B6B',
+                backgroundColor: 'rgba(255, 107, 107, 0.1)',
+                borderWidth: 2,
+                fill: true,
+                tension: 0.4
+            }]
+        },
+        options: {
+            responsive: true,
+            plugins: {
+                legend: {
+                    display: false
+                }
+            },
+            scales: {
+                y: {
+                    beginAtZero: true,
+                    grid: {
+                        display: true,
+                        drawBorder: false
+                    }
+                },
+                x: {
+                    grid: {
+                        display: false
+                    }
+                }
+            }
+        }
+    });
+</script>
+{% endblock %} 

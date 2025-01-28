@@ -1,0 +1,57 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="max-w-7xl mx-auto px-4 py-8">
+    <h1 class="text-3xl font-bold text-gray-900 mb-8">Search Results for "{{ query }}"</h1>
+    
+    {% if results.count() > 0 %}
+        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            {% for item in results %}
+            <div class="bg-white rounded-xl shadow-sm overflow-hidden">
+                <div class="relative h-48">
+                    <img src="{{ item.image_url }}" alt="{{ item.name }}" class="w-full h-full object-cover">
+                    {% if item.featured %}
+                    <span class="absolute top-4 left-4 bg-primary text-white px-2 py-1 rounded-lg text-sm">
+                        Featured
+                    </span>
+                    {% endif %}
+                </div>
+                <div class="p-6">
+                    <div class="flex justify-between items-start mb-4">
+                        <div>
+                            <h3 class="text-lg font-semibold text-gray-900">{{ item.name }}</h3>
+                            <p class="text-sm text-gray-600">{{ item.category }}</p>
+                        </div>
+                        <p class="text-lg font-bold text-primary">${{ "%.2f"|format(item.price) }}</p>
+                    </div>
+                    <p class="text-gray-600 text-sm mb-4">{{ item.description }}</p>
+                    <div class="flex items-center justify-between">
+                        <div class="flex items-center space-x-2">
+                            {% for tag in item.dietary_info %}
+                            <span class="px-2 py-1 bg-gray-100 rounded-lg text-xs text-gray-600">
+                                {{ tag|title }}
+                            </span>
+                            {% endfor %}
+                        </div>
+                        <button onclick="addToCart('{{ item._id }}')" 
+                                class="bg-primary text-white px-4 py-2 rounded-lg hover:bg-opacity-90">
+                            Add to Cart
+                        </button>
+                    </div>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+    {% else %}
+        <div class="text-center py-12">
+            <i class="fas fa-search text-gray-400 text-5xl mb-4"></i>
+            <h2 class="text-2xl font-semibold text-gray-900 mb-2">No results found</h2>
+            <p class="text-gray-600">Try different keywords or browse our menu</p>
+            <a href="{{ url_for('menu') }}" class="inline-flex items-center px-6 py-3 mt-6 bg-primary text-white rounded-lg hover:bg-opacity-90">
+                <i class="fas fa-utensils mr-2"></i>
+                Browse Menu
+            </a>
+        </div>
+    {% endif %}
+</div>
+{% endblock %} 

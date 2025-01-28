@@ -7,6 +7,9 @@ import os
 from dotenv import load_dotenv
 from bson.objectid import ObjectId
 from datetime import datetime, timedelta
+from functools import wraps
+from flask import abort
+from passlib.hash import sha256_crypt
 
 # Load environment variables
 load_dotenv()
@@ -32,6 +35,21 @@ class User(UserMixin):
         
     def get_id(self):
         return str(self.user_data['_id'])
+    
+    @property
+    def role(self):
+        return self.user_data.get('role', 'customer')
+    
+    def has_role(self, role):
+        return self.role == role
+
+def admin_required(f):
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        if not current_user.is_authenticated or not current_user.has_role('admin'):
+            abort(403)
+        return f(*args, **kwargs)
+    return decorated_function
 
 @login_manager.user_loader
 def load_user(user_id):
@@ -41,6 +59,10 @@ def load_user(user_id):
 # Routes
 @app.route('/')
 def index():
+    # Redirect admin users to admin dashboard
+    if current_user.is_authenticated and current_user.has_role('admin'):
+        return redirect(url_for('admin_dashboard'))
+    
     featured_items = mongo.db.menu.find({'featured': True}).limit(4)
     categories = mongo.db.categories.find()
     return render_template('index.html', featured_items=featured_items, categories=categories)
@@ -58,7 +80,7 @@ def login():
         
         user = mongo.db.users.find_one({'email': email})
         
-        if user and check_password_hash(user['password'], password):
+        if user and sha256_crypt.verify(password, user['password']):
             user_obj = User(user)
             login_user(user_obj, remember=remember)
             
@@ -72,6 +94,10 @@ def login():
                     )
                 except:
                     pass
+            
+            # Redirect admin users to admin dashboard
+            if user.get('role') == 'admin':
+                return redirect(url_for('admin_dashboard'))
                     
             return redirect(url_for('index'))
         
@@ -104,11 +130,14 @@ def register():
         
         # Hash password and create user
         try:
-            hashed_password = generate_password_hash(password)
+            hashed_password = sha256_crypt.hash(password)
+            # Set default role as customer
             mongo.db.users.insert_one({
                 'email': email,
                 'password': hashed_password,
-                'name': name
+                'name': name,
+                'role': 'customer',
+                'created_at': datetime.now()
             })
             
             flash('Registration successful! Please login.')
@@ -296,45 +325,93 @@ def track_order(order_id):
 # WebSocket event handlers
 @socketio.on('connect')
 def handle_connect():
-    print('Client connected')
+    if current_user.is_authenticated and current_user.has_role('admin'):
+        # Send initial stats to admin
+        emit('stats_update', get_dashboard_stats())
 
 @socketio.on('disconnect')
 def handle_disconnect():
-    print('Client disconnected')
+    pass
 
-def update_order_status(order_id, status):
-    """Update order status and notify clients via WebSocket"""
-    order = mongo.db.orders.find_one_and_update(
-        {'order_id': order_id},
-        {'$set': {'status': status}},
-        return_document=True
-    )
+def get_dashboard_stats():
+    """Get real-time dashboard statistics"""
+    total_orders = mongo.db.orders.count_documents({})
+    total_revenue = sum(order.get('total', 0) for order in mongo.db.orders.find())
+    active_users = mongo.db.users.count_documents({'active': True})
+    menu_items = mongo.db.menu.count_documents({})
     
+    return {
+        'total_orders': total_orders,
+        'total_revenue': total_revenue,
+        'active_users': active_users,
+        'menu_items': menu_items
+    }
+
+def broadcast_order_update(order_id, status):
+    """Broadcast order status updates to admin clients"""
+    order = mongo.db.orders.find_one({'_id': ObjectId(order_id)})
     if order:
-        status_progress = {
-            'confirmed': 25,
-            'preparing': 50,
-            'out_for_delivery': 75,
-            'delivered': 100
-        }
-        
-        # Calculate estimated time based on status
-        if status == 'confirmed':
-            estimated_time = "45-60 minutes"
-        elif status == 'preparing':
-            estimated_time = "30-45 minutes"
-        elif status == 'out_for_delivery':
-            estimated_time = "15-20 minutes"
-        else:
-            estimated_time = "Delivered"
-        
-        # Emit update to all clients
-        socketio.emit('status_update', {
-            'order_id': order_id,
-            'status': status,
-            'progress': status_progress.get(status, 0),
-            'estimated_time': estimated_time
+        socketio.emit('order_status_update', {
+            'order_id': str(order['_id']),
+            'status': status
         })
+        # Update dashboard stats for all admin clients
+        socketio.emit('stats_update', get_dashboard_stats())
+
+@app.route('/api/admin/update-order-status', methods=['POST'])
+@admin_required
+def update_order_status():
+    data = request.get_json()
+    order_id = data.get('order_id')
+    new_status = data.get('status')
+    
+    if not order_id or not new_status:
+        return jsonify({'error': 'Missing required fields'}), 400
+    
+    try:
+        mongo.db.orders.update_one(
+            {'_id': ObjectId(order_id)},
+            {'$set': {'status': new_status}}
+        )
+        broadcast_order_update(order_id, new_status)
+        return jsonify({'success': True})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/admin/menu', methods=['GET'])
+@admin_required
+def get_menu_items():
+    """Get all menu items for admin panel"""
+    menu_items = list(mongo.db.menu.find())
+    for item in menu_items:
+        item['_id'] = str(item['_id'])
+    return jsonify(menu_items)
+
+def notify_new_order(order):
+    """Notify admin clients of new orders"""
+    socketio.emit('new_order', {
+        'order_id': str(order['_id']),
+        'total': order['total'],
+        'status': order['status'],
+        'created_at': order['created_at'].isoformat()
+    })
+    # Update dashboard stats for all admin clients
+    socketio.emit('stats_update', get_dashboard_stats())
+
+# Update the create_order function to notify admins
+def create_order(order_data):
+    """Create a new order and notify admin clients"""
+    order = {
+        'user_id': current_user.id,
+        'items': order_data['items'],
+        'total': order_data['total'],
+        'status': 'confirmed',
+        'created_at': datetime.utcnow()
+    }
+    result = mongo.db.orders.insert_one(order)
+    order['_id'] = result.inserted_id
+    notify_new_order(order)
+    return str(result.inserted_id)
 
 # Context processors
 @app.context_processor
@@ -351,6 +428,118 @@ def page_not_found(e):
 @app.errorhandler(500)
 def internal_server_error(e):
     return render_template('errors/500.html'), 500
+
+@app.errorhandler(403)
+def forbidden(e):
+    return render_template('errors/403.html'), 403
+
+# Protect admin routes with the admin_required decorator
+@app.route('/admin/dashboard')
+@login_required
+@admin_required
+def admin_dashboard():
+    # Calculate stats
+    stats = {
+        'total_orders': mongo.db.orders.count_documents({}),
+        'total_revenue': sum(order.get('total', 0) for order in mongo.db.orders.find()),
+        'active_users': mongo.db.users.count_documents({'last_login': {'$gte': datetime.now() - timedelta(days=30)}}),
+        'menu_items': mongo.db.menu.count_documents({}),
+        'active_items': mongo.db.menu.count_documents({'active': True}),
+        'orders_growth': 15,  # Calculate from previous month
+        'revenue_growth': 20,  # Calculate from previous month
+        'users_growth': 10  # Calculate from previous month
+    }
+    
+    # Get recent orders
+    recent_orders = mongo.db.orders.find().sort('created_at', -1).limit(5)
+    
+    # Get popular items
+    popular_items = mongo.db.menu.find().sort('orders_count', -1).limit(5)
+    
+    # Prepare chart data
+    chart_data = {
+        'labels': ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'],
+        'sales': [150, 230, 180, 290, 200, 300, 250]
+    }
+    
+    return render_template('admin/dashboard.html',
+                         stats=stats,
+                         recent_orders=recent_orders,
+                         popular_items=popular_items,
+                         chart_data=chart_data)
+
+@app.route('/admin/menu')
+@login_required
+@admin_required
+def admin_menu():
+    menu_items = mongo.db.menu.find()
+    categories = mongo.db.menu.distinct('category')
+    return render_template('admin/menu.html',
+                         menu_items=menu_items,
+                         categories=categories)
+
+@app.route('/admin/orders')
+@login_required
+@admin_required
+def admin_orders():
+    orders = mongo.db.orders.find().sort('created_at', -1)
+    return render_template('admin/orders.html', orders=orders)
+
+@app.route('/admin/analytics')
+@login_required
+@admin_required
+def admin_analytics():
+    # Calculate analytics data
+    total_orders = mongo.db.orders.count_documents({})
+    total_revenue = sum(order.get('total', 0) for order in mongo.db.orders.find())
+    avg_order_value = total_revenue / total_orders if total_orders > 0 else 0
+    
+    # Get top selling items
+    top_items = mongo.db.menu.find().sort('orders_count', -1).limit(10)
+    
+    # Get sales by category
+    category_sales = list(mongo.db.orders.aggregate([
+        {'$unwind': '$items'},
+        {'$group': {
+            '_id': '$items.category',
+            'total': {'$sum': {'$multiply': ['$items.price', '$items.quantity']}}
+        }}
+    ]))
+    
+    return render_template('admin/analytics.html',
+                         total_orders=total_orders,
+                         total_revenue=total_revenue,
+                         avg_order_value=avg_order_value,
+                         top_items=top_items,
+                         category_sales=category_sales)
+
+@app.route('/admin/users')
+@login_required
+@admin_required
+def admin_users():
+    users = mongo.db.users.find()
+    return render_template('admin/users.html', users=users)
+
+# Add route to manage user roles (admin only)
+@app.route('/api/admin/users/<user_id>/role', methods=['PUT'])
+@login_required
+@admin_required
+def update_user_role(user_id):
+    try:
+        data = request.json
+        new_role = data.get('role')
+        
+        if new_role not in ['admin', 'customer', 'staff']:
+            return jsonify({'status': 'error', 'message': 'Invalid role'}), 400
+            
+        mongo.db.users.update_one(
+            {'_id': ObjectId(user_id)},
+            {'$set': {'role': new_role}}
+        )
+        
+        return jsonify({'status': 'success'})
+    except Exception as e:
+        return jsonify({'status': 'error', 'message': str(e)}), 400
 
 if __name__ == '__main__':
     socketio.run(app, debug=True) 

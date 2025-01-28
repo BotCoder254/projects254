@@ -274,29 +274,52 @@ function initializeCharts(data) {
         options: chartOptions
     });
 
-    // User Activity Chart
+    // Enhanced User Activity Chart
     charts.userActivity = new Chart(document.getElementById('userActivityChart'), {
         type: 'bar',
         data: {
             labels: data.user_activity.labels,
             datasets: [{
                 label: 'New Users',
-                data: data.user_activity.new_users,
-                backgroundColor: '#F59E0B'
+                data: data.user_metrics.new_users,
+                backgroundColor: '#F59E0B',
+                borderRadius: 4
             }, {
-                label: 'Repeat Customers',
-                data: data.user_activity.repeat_users,
-                backgroundColor: '#3B82F6'
+                label: 'Returning Users',
+                data: data.user_metrics.returning_users,
+                backgroundColor: '#3B82F6',
+                borderRadius: 4
             }]
         },
         options: {
             ...chartOptions,
             scales: {
                 x: {
-                    stacked: true
+                    stacked: true,
+                    grid: {
+                        display: false
+                    }
                 },
                 y: {
-                    stacked: true
+                    stacked: true,
+                    beginAtZero: true,
+                    grid: {
+                        color: 'rgba(0, 0, 0, 0.1)'
+                    }
+                }
+            },
+            plugins: {
+                legend: {
+                    display: true,
+                    position: 'top',
+                    labels: {
+                        usePointStyle: true,
+                        padding: 20
+                    }
+                },
+                tooltip: {
+                    mode: 'index',
+                    intersect: false
                 }
             }
         }
@@ -321,8 +344,8 @@ function updateCharts(data) {
 
     // Update User Activity
     charts.userActivity.data.labels = data.user_activity.labels;
-    charts.userActivity.data.datasets[0].data = data.user_activity.new_users;
-    charts.userActivity.data.datasets[1].data = data.user_activity.repeat_users;
+    charts.userActivity.data.datasets[0].data = data.user_metrics.new_users;
+    charts.userActivity.data.datasets[1].data = data.user_metrics.returning_users;
     charts.userActivity.update();
 
     // Update summary cards
@@ -333,6 +356,16 @@ function updateCharts(data) {
 
     // Update top items table
     updateTopItemsTable(data.top_items);
+
+    // Update engagement metrics if available
+    if (data.user_metrics.engagement) {
+        updateEngagementMetrics(data.user_metrics.engagement);
+    }
+
+    // Update recent actions list
+    if (data.recent_actions) {
+        updateRecentActions(data.recent_actions);
+    }
 }
 
 function updateTopItemsTable(items) {
@@ -364,6 +397,44 @@ function updateTopItemsTable(items) {
     `).join('');
 }
 
+function updateEngagementMetrics(engagement) {
+    const metrics = engagement.reduce((acc, metric) => {
+        acc[metric._id] = metric.count;
+        return acc;
+    }, {});
+
+    // Update any UI elements that show engagement metrics
+    Object.entries(metrics).forEach(([action, count]) => {
+        const element = document.querySelector(`[data-engagement="${action}"]`);
+        if (element) {
+            element.textContent = count;
+        }
+    });
+}
+
+function updateRecentActions(actions) {
+    const container = document.getElementById('recentActions');
+    if (!container) return;
+
+    const actionsList = actions.map(action => `
+        <div class="flex items-center space-x-4 py-3 border-b border-gray-100">
+            <div class="flex-shrink-0">
+                <i class="fas fa-user-clock text-blue-500"></i>
+            </div>
+            <div class="flex-1 min-w-0">
+                <p class="text-sm font-medium text-gray-900 truncate">
+                    ${action.action.replace(/_/g, ' ').toLowerCase()}
+                </p>
+                <p class="text-sm text-gray-500">
+                    ${new Date(action.timestamp).toLocaleString()}
+                </p>
+            </div>
+        </div>
+    `).join('');
+
+    container.innerHTML = actionsList;
+}
+
 // Initialize charts on page load
 document.addEventListener('DOMContentLoaded', function() {
     const timeRange = document.getElementById('timeRange').value;
@@ -382,13 +453,31 @@ socket.on('analytics_update', function(data) {
 socket.on('user_activity', function(data) {
     // Update active users count and growth
     document.querySelector('[data-stat="active-users"]').textContent = data.active_users;
-    const growthElement = document.querySelector('[data-stat="active-users"]').nextElementSibling;
+    const growthElement = document.querySelector('[data-stat="active-users"]').nextElementSibling.querySelector('span:first-child');
     const growthValue = data.users_growth;
+    
     growthElement.innerHTML = `
         <i class="fas ${growthValue >= 0 ? 'fa-arrow-up' : 'fa-arrow-down'} mr-1"></i>
-        ${growthValue}%
+        ${Math.abs(growthValue).toFixed(1)}%
     `;
     growthElement.className = `text-sm ${growthValue >= 0 ? 'text-green-600' : 'text-red-600'}`;
+
+    // Update user activity chart with new vs returning users
+    if (charts.userActivity) {
+        charts.userActivity.data.datasets[0].data = data.user_metrics.new_users;
+        charts.userActivity.data.datasets[1].data = data.user_metrics.returning_users;
+        charts.userActivity.update();
+    }
+
+    // Update engagement metrics if available
+    if (data.user_metrics.engagement) {
+        updateEngagementMetrics(data.user_metrics.engagement);
+    }
+
+    // Update recent actions list
+    if (data.recent_actions) {
+        updateRecentActions(data.recent_actions);
+    }
 });
 
 // Update analytics when time range changes

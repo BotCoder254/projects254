@@ -1,7 +1,7 @@
 from flask import Flask, render_template, request, redirect, url_for, flash, jsonify, abort
 from flask_pymongo import PyMongo
 from flask_login import LoginManager, UserMixin, login_user, login_required, logout_user, current_user
-from flask_socketio import SocketIO, emit
+from flask_socketio import SocketIO, emit, join_room
 from werkzeug.security import generate_password_hash, check_password_hash
 import os
 from dotenv import load_dotenv
@@ -324,13 +324,53 @@ def track_order(order_id):
 # WebSocket event handlers
 @socketio.on('connect')
 def handle_connect():
+    """Handle Socket.IO connection"""
     if current_user.is_authenticated and current_user.has_role('admin'):
-        # Send initial stats to admin
-        emit('stats_update', get_dashboard_stats())
+        join_room('admin_analytics')
+        # Send initial analytics data
+        with app.app_context():
+            data = get_realtime_user_data(
+                datetime.now() - timedelta(days=1),
+                datetime.now()
+            )
+            emit('user_activity', data, room='admin_analytics')
 
-@socketio.on('disconnect')
-def handle_disconnect():
-    pass
+def emit_user_update():
+    """Emit user activity updates to admin analytics"""
+    with app.app_context():
+        user_data = get_realtime_user_data(
+            datetime.now() - timedelta(days=1),
+            datetime.now()
+        )
+        socketio.emit('user_activity', user_data, room='admin_analytics')
+
+@app.before_request
+def track_user_activity():
+    """Track user activity for analytics"""
+    if current_user.is_authenticated:
+        # Update user's last activity
+        mongo.db.users.update_one(
+            {'_id': ObjectId(current_user.get_id())},
+            {'$set': {'last_activity': datetime.now()}}
+        )
+        
+        # Record user action
+        if request.endpoint:
+            action_type = request.endpoint
+            mongo.db.user_actions.insert_one({
+                'user': current_user.get_id(),
+                'action_type': action_type,
+                'timestamp': datetime.now(),
+                'details': {
+                    'method': request.method,
+                    'path': request.path,
+                    'endpoint': request.endpoint
+                }
+            })
+            
+            # Emit update to admin analytics
+            if action_type not in ['static', 'socket.io']:
+                emit_user_update()
 
 def get_dashboard_stats():
     """Get real-time dashboard statistics"""
@@ -503,7 +543,64 @@ def get_analytics_range(time_range):
     
     # Get analytics data for the time range
     analytics_data = get_analytics_data(start_date, end_date)
+    
+    # Get real-time user data
+    user_data = get_realtime_user_data(start_date, end_date)
+    analytics_data.update(user_data)
+    
     return jsonify(analytics_data)
+
+def get_realtime_user_data(start_date, end_date):
+    """Get real-time user activity data"""
+    # Get active users in the current period
+    active_users = mongo.db.users.count_documents({
+        'last_activity': {'$gte': start_date, '$lte': end_date}
+    })
+    
+    # Get active users in the previous period
+    previous_start = start_date - (end_date - start_date)
+    previous_active = mongo.db.users.count_documents({
+        'last_activity': {'$gte': previous_start, '$lt': start_date}
+    })
+    
+    # Calculate user growth
+    users_growth = ((active_users - previous_active) / previous_active * 100) if previous_active > 0 else 0
+    
+    # Get user actions (last 24 hours)
+    recent_actions = list(mongo.db.user_actions.find({
+        'timestamp': {'$gte': datetime.now() - timedelta(hours=24)}
+    }).sort('timestamp', -1).limit(50))
+    
+    # Get new vs returning users
+    new_users = mongo.db.users.count_documents({
+        'created_at': {'$gte': start_date, '$lte': end_date}
+    })
+    returning_users = active_users - new_users
+    
+    # Get user engagement metrics
+    engagement_metrics = mongo.db.user_actions.aggregate([
+        {'$match': {'timestamp': {'$gte': start_date, '$lte': end_date}}},
+        {'$group': {
+            '_id': '$action_type',
+            'count': {'$sum': 1}
+        }}
+    ])
+    
+    return {
+        'active_users': active_users,
+        'users_growth': users_growth,
+        'recent_actions': [{
+            'user': action['user'],
+            'action': action['action_type'],
+            'timestamp': action['timestamp'].strftime('%Y-%m-%d %H:%M:%S'),
+            'details': action.get('details', {})
+        } for action in recent_actions],
+        'user_metrics': {
+            'new_users': new_users,
+            'returning_users': returning_users,
+            'engagement': list(engagement_metrics)
+        }
+    }
 
 @app.route('/api/admin/analytics/filter', methods=['POST'])
 @login_required
@@ -710,29 +807,231 @@ def admin_analytics():
 @login_required
 @admin_required
 def admin_users():
-    users = mongo.db.users.find()
-    return render_template('admin/users.html', users=users)
+    # Get all users with pagination
+    page = request.args.get('page', 1, type=int)
+    per_page = 10
+    skip = (page - 1) * per_page
+    
+    # Get users with their last activity and order count
+    pipeline = [
+        {
+            '$lookup': {
+                'from': 'orders',
+                'localField': '_id',
+                'foreignField': 'user_id',
+                'as': 'orders'
+            }
+        },
+        {
+            '$addFields': {
+                'total_orders': {'$size': '$orders'},
+                'total_spent': {'$sum': '$orders.total'},
+                'last_order_date': {'$max': '$orders.created_at'}
+            }
+        },
+        {
+            '$project': {
+                'name': 1,
+                'email': 1,
+                'role': 1,
+                'created_at': 1,
+                'last_activity': 1,
+                'total_orders': 1,
+                'total_spent': 1,
+                'last_order_date': 1,
+                'status': {
+                    '$cond': [
+                        {'$gte': ['$last_activity', datetime.now() - timedelta(days=30)]},
+                        'active',
+                        'inactive'
+                    ]
+                }
+            }
+        },
+        {'$skip': skip},
+        {'$limit': per_page}
+    ]
+    
+    users = list(mongo.db.users.aggregate(pipeline))
+    total_users = mongo.db.users.count_documents({})
+    
+    # Get user statistics
+    total_active = mongo.db.users.count_documents({
+        'last_activity': {'$gte': datetime.now() - timedelta(days=30)}
+    })
+    new_users_today = mongo.db.users.count_documents({
+        'created_at': {'$gte': datetime.now().replace(hour=0, minute=0, second=0)}
+    })
+    
+    stats = {
+        'total_users': total_users,
+        'active_users': total_active,
+        'new_users_today': new_users_today,
+        'active_percentage': (total_active / total_users * 100) if total_users > 0 else 0
+    }
+    
+    return render_template('admin/users.html',
+                         users=users,
+                         stats=stats,
+                         page=page,
+                         pages=(total_users + per_page - 1) // per_page)
 
-# Add route to manage user roles (admin only)
-@app.route('/api/admin/users/<user_id>/role', methods=['PUT'])
+@app.route('/api/admin/users/search')
 @login_required
 @admin_required
-def update_user_role(user_id):
-    try:
-        data = request.json
-        new_role = data.get('role')
-        
-        if new_role not in ['admin', 'customer', 'staff']:
-            return jsonify({'status': 'error', 'message': 'Invalid role'}), 400
-            
+def search_users():
+    query = request.args.get('q', '').strip()
+    filter_by = request.args.get('filter', 'all')
+    
+    # Base query
+    base_query = {}
+    
+    # Add search query if provided
+    if query:
+        base_query['$or'] = [
+            {'name': {'$regex': query, '$options': 'i'}},
+            {'email': {'$regex': query, '$options': 'i'}}
+        ]
+    
+    # Add filter
+    if filter_by == 'active':
+        base_query['last_activity'] = {'$gte': datetime.now() - timedelta(days=30)}
+    elif filter_by == 'inactive':
+        base_query['last_activity'] = {'$lt': datetime.now() - timedelta(days=30)}
+    elif filter_by == 'admin':
+        base_query['role'] = 'admin'
+    
+    # Get users with their order data
+    pipeline = [
+        {'$match': base_query},
+        {
+            '$lookup': {
+                'from': 'orders',
+                'localField': '_id',
+                'foreignField': 'user_id',
+                'as': 'orders'
+            }
+        },
+        {
+            '$addFields': {
+                'total_orders': {'$size': '$orders'},
+                'total_spent': {'$sum': '$orders.total'},
+                'last_order_date': {'$max': '$orders.created_at'}
+            }
+        },
+        {
+            '$project': {
+                'name': 1,
+                'email': 1,
+                'role': 1,
+                'created_at': 1,
+                'last_activity': 1,
+                'total_orders': 1,
+                'total_spent': 1,
+                'last_order_date': 1,
+                'status': {
+                    '$cond': [
+                        {'$gte': ['$last_activity', datetime.now() - timedelta(days=30)]},
+                        'active',
+                        'inactive'
+                    ]
+                }
+            }
+        }
+    ]
+    
+    users = list(mongo.db.users.aggregate(pipeline))
+    return jsonify(users)
+
+@app.route('/api/admin/users/<user_id>', methods=['PUT'])
+@login_required
+@admin_required
+def update_user(user_id):
+    data = request.json
+    
+    # Validate user exists
+    user = mongo.db.users.find_one({'_id': ObjectId(user_id)})
+    if not user:
+        return jsonify({'error': 'User not found'}), 404
+    
+    # Update allowed fields
+    allowed_updates = {
+        'name': data.get('name'),
+        'email': data.get('email'),
+        'role': data.get('role'),
+        'status': data.get('status')
+    }
+    
+    # Remove None values
+    updates = {k: v for k, v in allowed_updates.items() if v is not None}
+    
+    if updates:
         mongo.db.users.update_one(
             {'_id': ObjectId(user_id)},
-            {'$set': {'role': new_role}}
+            {'$set': updates}
         )
         
-        return jsonify({'status': 'success'})
-    except Exception as e:
-        return jsonify({'status': 'error', 'message': str(e)}), 400
+        # Emit user update event
+        emit_user_update()
+        
+        return jsonify({'message': 'User updated successfully'})
+    
+    return jsonify({'message': 'No updates provided'})
+
+@app.route('/api/admin/users/<user_id>', methods=['DELETE'])
+@login_required
+@admin_required
+def delete_user(user_id):
+    # Validate user exists
+    user = mongo.db.users.find_one({'_id': ObjectId(user_id)})
+    if not user:
+        return jsonify({'error': 'User not found'}), 404
+    
+    # Delete user
+    mongo.db.users.delete_one({'_id': ObjectId(user_id)})
+    
+    # Delete user's orders
+    mongo.db.orders.delete_many({'user_id': ObjectId(user_id)})
+    
+    # Emit user update event
+    emit_user_update()
+    
+    return jsonify({'message': 'User deleted successfully'})
+
+@app.route('/api/admin/users/bulk-action', methods=['POST'])
+@login_required
+@admin_required
+def bulk_user_action():
+    data = request.json
+    user_ids = data.get('user_ids', [])
+    action = data.get('action')
+    
+    if not user_ids or not action:
+        return jsonify({'error': 'Missing required parameters'}), 400
+    
+    # Convert string IDs to ObjectId
+    object_ids = [ObjectId(uid) for uid in user_ids]
+    
+    if action == 'delete':
+        # Delete users
+        mongo.db.users.delete_many({'_id': {'$in': object_ids}})
+        # Delete their orders
+        mongo.db.orders.delete_many({'user_id': {'$in': object_ids}})
+    elif action == 'activate':
+        mongo.db.users.update_many(
+            {'_id': {'$in': object_ids}},
+            {'$set': {'status': 'active'}}
+        )
+    elif action == 'deactivate':
+        mongo.db.users.update_many(
+            {'_id': {'$in': object_ids}},
+            {'$set': {'status': 'inactive'}}
+        )
+    
+    # Emit user update event
+    emit_user_update()
+    
+    return jsonify({'message': f'Bulk action {action} completed successfully'})
 
 if __name__ == '__main__':
     socketio.run(app, debug=True) 

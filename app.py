@@ -1,4 +1,4 @@
-from flask import Flask, render_template, request, redirect, url_for, flash, jsonify
+from flask import Flask, render_template, request, redirect, url_for, flash, jsonify, abort
 from flask_pymongo import PyMongo
 from flask_login import LoginManager, UserMixin, login_user, login_required, logout_user, current_user
 from flask_socketio import SocketIO, emit
@@ -8,7 +8,6 @@ from dotenv import load_dotenv
 from bson.objectid import ObjectId
 from datetime import datetime, timedelta
 from functools import wraps
-from flask import abort
 from passlib.hash import sha256_crypt
 
 # Load environment variables
@@ -485,6 +484,155 @@ def admin_orders():
     orders = mongo.db.orders.find().sort('created_at', -1)
     return render_template('admin/orders.html', orders=orders)
 
+@app.route('/api/admin/analytics/range/<time_range>')
+@login_required
+@admin_required
+def get_analytics_range(time_range):
+    end_date = datetime.now()
+    
+    if time_range == 'today':
+        start_date = end_date.replace(hour=0, minute=0, second=0, microsecond=0)
+    elif time_range == 'week':
+        start_date = end_date - timedelta(days=7)
+    elif time_range == 'month':
+        start_date = end_date - timedelta(days=30)
+    elif time_range == 'year':
+        start_date = end_date - timedelta(days=365)
+    else:
+        return jsonify({'error': 'Invalid time range'}), 400
+    
+    # Get analytics data for the time range
+    analytics_data = get_analytics_data(start_date, end_date)
+    return jsonify(analytics_data)
+
+@app.route('/api/admin/analytics/filter', methods=['POST'])
+@login_required
+@admin_required
+def filter_analytics():
+    data = request.json
+    start_date = datetime.strptime(data['start_date'], '%Y-%m-%d')
+    end_date = datetime.strptime(data['end_date'], '%Y-%m-%d')
+    
+    # Get analytics data for the date range
+    analytics_data = get_analytics_data(start_date, end_date)
+    return jsonify(analytics_data)
+
+def get_analytics_data(start_date, end_date):
+    # Calculate analytics data
+    orders = list(mongo.db.orders.find({
+        'created_at': {'$gte': start_date, '$lte': end_date}
+    }))
+    
+    total_orders = len(orders)
+    total_revenue = sum(order.get('total', 0) for order in orders)
+    avg_order_value = total_revenue / total_orders if total_orders > 0 else 0
+    
+    # Calculate growth percentages
+    previous_period = end_date - (end_date - start_date)
+    previous_orders = mongo.db.orders.count_documents({
+        'created_at': {'$gte': previous_period, '$lt': start_date}
+    })
+    previous_revenue = sum(order.get('total', 0) for order in mongo.db.orders.find({
+        'created_at': {'$gte': previous_period, '$lt': start_date}
+    }))
+    previous_avg_order = previous_revenue / previous_orders if previous_orders > 0 else 0
+    
+    revenue_growth = ((total_revenue - previous_revenue) / previous_revenue * 100) if previous_revenue > 0 else 0
+    orders_growth = ((total_orders - previous_orders) / previous_orders * 100) if previous_orders > 0 else 0
+    avg_order_growth = ((avg_order_value - previous_avg_order) / previous_avg_order * 100) if previous_avg_order > 0 else 0
+    
+    # Get active users and growth
+    active_users = mongo.db.users.count_documents({
+        'last_login': {'$gte': start_date}
+    })
+    previous_active_users = mongo.db.users.count_documents({
+        'last_login': {'$gte': previous_period, '$lt': start_date}
+    })
+    users_growth = ((active_users - previous_active_users) / previous_active_users * 100) if previous_active_users > 0 else 0
+    
+    # Get revenue trend data
+    days = (end_date - start_date).days + 1
+    revenue_trend = {
+        'labels': [(end_date - timedelta(days=x)).strftime('%b %d') for x in range(days-1, -1, -1)],
+        'data': [0] * days
+    }
+    
+    # Populate revenue trend data
+    for order in orders:
+        day_index = (order['created_at'].date() - start_date.date()).days
+        if 0 <= day_index < days:
+            revenue_trend['data'][day_index] += order.get('total', 0)
+    
+    # Get popular dishes
+    pipeline = [
+        {'$match': {'created_at': {'$gte': start_date, '$lte': end_date}}},
+        {'$unwind': '$items'},
+        {'$group': {
+            '_id': '$items.id',
+            'name': {'$first': '$items.name'},
+            'units_sold': {'$sum': '$items.quantity'},
+            'revenue': {'$sum': {'$multiply': ['$items.price', '$items.quantity']}}
+        }},
+        {'$sort': {'units_sold': -1}},
+        {'$limit': 10}
+    ]
+    popular_items = list(mongo.db.orders.aggregate(pipeline))
+    
+    popular_dishes = {
+        'labels': [item['name'] for item in popular_items],
+        'data': [item['units_sold'] for item in popular_items]
+    }
+    
+    # Get order activity by hour
+    order_activity = {
+        'labels': [f"{h:02d}:00" for h in range(24)],
+        'data': [0] * 24
+    }
+    
+    for order in orders:
+        hour = order['created_at'].hour
+        order_activity['data'][hour] += 1
+    
+    # Get user activity
+    user_activity = {
+        'labels': [(end_date - timedelta(days=x)).strftime('%b %d') for x in range(7, -1, -1)],
+        'new_users': [0] * 8,
+        'repeat_users': [0] * 8
+    }
+    
+    # Populate user activity data
+    for i in range(8):
+        day = end_date - timedelta(days=i)
+        day_start = day.replace(hour=0, minute=0, second=0, microsecond=0)
+        day_end = day.replace(hour=23, minute=59, second=59, microsecond=999999)
+        
+        new_users = mongo.db.users.count_documents({
+            'created_at': {'$gte': day_start, '$lte': day_end}
+        })
+        repeat_users = mongo.db.users.count_documents({
+            'last_login': {'$gte': day_start, '$lte': day_end},
+            'created_at': {'$lt': day_start}
+        })
+        
+        user_activity['new_users'][7-i] = new_users
+        user_activity['repeat_users'][7-i] = repeat_users
+    
+    return {
+        'total_orders': total_orders,
+        'total_revenue': total_revenue,
+        'avg_order_value': avg_order_value,
+        'revenue_growth': revenue_growth,
+        'orders_growth': orders_growth,
+        'avg_order_growth': avg_order_growth,
+        'active_users': active_users,
+        'users_growth': users_growth,
+        'revenue_trend': revenue_trend,
+        'popular_dishes': popular_dishes,
+        'order_activity': order_activity,
+        'user_activity': user_activity,
+        'top_items': popular_items
+    }
+
 @app.route('/admin/analytics')
 @login_required
 @admin_required
@@ -494,8 +642,22 @@ def admin_analytics():
     total_revenue = sum(order.get('total', 0) for order in mongo.db.orders.find())
     avg_order_value = total_revenue / total_orders if total_orders > 0 else 0
     
+    # Calculate growth percentages (comparing to previous period)
+    previous_orders = mongo.db.orders.count_documents({'created_at': {'$lt': datetime.now() - timedelta(days=30)}})
+    previous_revenue = sum(order.get('total', 0) for order in mongo.db.orders.find({'created_at': {'$lt': datetime.now() - timedelta(days=30)}}))
+    previous_avg_order = previous_revenue / previous_orders if previous_orders > 0 else 0
+    
+    revenue_growth = ((total_revenue - previous_revenue) / previous_revenue * 100) if previous_revenue > 0 else 0
+    orders_growth = ((total_orders - previous_orders) / previous_orders * 100) if previous_orders > 0 else 0
+    avg_order_growth = ((avg_order_value - previous_avg_order) / previous_avg_order * 100) if previous_avg_order > 0 else 0
+    
+    # Get active users count and growth
+    active_users = mongo.db.users.count_documents({'last_login': {'$gte': datetime.now() - timedelta(days=30)}})
+    previous_active_users = mongo.db.users.count_documents({'last_login': {'$lt': datetime.now() - timedelta(days=30), '$gte': datetime.now() - timedelta(days=60)}})
+    users_growth = ((active_users - previous_active_users) / previous_active_users * 100) if previous_active_users > 0 else 0
+    
     # Get top selling items
-    top_items = mongo.db.menu.find().sort('orders_count', -1).limit(10)
+    top_items = list(mongo.db.menu.find().sort('orders_count', -1).limit(10))
     
     # Get sales by category
     category_sales = list(mongo.db.orders.aggregate([
@@ -506,12 +668,43 @@ def admin_analytics():
         }}
     ]))
     
+    # Prepare chart data
+    revenue_trend = {
+        'labels': ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'],
+        'data': [150, 230, 180, 290, 200, 300, 250]
+    }
+    
+    popular_dishes = {
+        'labels': [item['name'] for item in top_items],
+        'data': [item.get('orders_count', 0) for item in top_items]
+    }
+    
+    order_activity = {
+        'labels': ['0-12', '12-24', '24-36', '36-48', '48-60', '60-72', '72-84'],
+        'data': [0, 0, 0, 0, 0, 0, 0]
+    }
+    
+    user_activity = {
+        'labels': ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'],
+        'new_users': [0, 0, 0, 0, 0, 0, 0],
+        'repeat_users': [0, 0, 0, 0, 0, 0, 0]
+    }
+    
     return render_template('admin/analytics.html',
                          total_orders=total_orders,
                          total_revenue=total_revenue,
                          avg_order_value=avg_order_value,
+                         revenue_growth=revenue_growth,
+                         orders_growth=orders_growth,
+                         avg_order_growth=avg_order_growth,
+                         active_users=active_users,
+                         users_growth=users_growth,
                          top_items=top_items,
-                         category_sales=category_sales)
+                         category_sales=category_sales,
+                         revenue_trend=revenue_trend,
+                         popular_dishes=popular_dishes,
+                         order_activity=order_activity,
+                         user_activity=user_activity)
 
 @app.route('/admin/users')
 @login_required

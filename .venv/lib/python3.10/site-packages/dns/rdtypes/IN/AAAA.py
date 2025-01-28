@@ -24,9 +24,10 @@ import dns.tokenizer
 
 @dns.immutable.immutable
 class AAAA(dns.rdata.Rdata):
+
     """AAAA record."""
 
-    __slots__ = ["address"]
+    __slots__ = ['address']
 
     def __init__(self, rdclass, rdtype, address):
         super().__init__(rdclass, rdtype)
@@ -36,9 +37,8 @@ class AAAA(dns.rdata.Rdata):
         return self.address
 
     @classmethod
-    def from_text(
-        cls, rdclass, rdtype, tok, origin=None, relativize=True, relativize_to=None
-    ):
+    def from_text(cls, rdclass, rdtype, tok, origin=None, relativize=True,
+                  relativize_to=None):
         address = tok.get_identifier()
         return cls(rdclass, rdtype, address)
 

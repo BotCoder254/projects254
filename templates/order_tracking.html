@@ -1,0 +1,170 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="max-w-4xl mx-auto px-4 py-8">
+    <div class="bg-white rounded-2xl shadow-lg p-6">
+        <!-- Order Header -->
+        <div class="flex justify-between items-center mb-8">
+            <div>
+                <h1 class="text-2xl font-bold text-gray-900">Order #{{ order.order_id }}</h1>
+                <p class="text-gray-600">Placed on {{ order.created_at.strftime('%B %d, %Y at %I:%M %p') }}</p>
+            </div>
+            <div class="text-right">
+                <p class="text-lg font-semibold text-primary">${{ "%.2f"|format(order.total) }}</p>
+                <p class="text-gray-600">{{ order.items|length }} items</p>
+            </div>
+        </div>
+
+        <!-- Order Status -->
+        <div class="mb-8">
+            <div class="relative">
+                <!-- Progress Bar -->
+                <div class="h-2 bg-gray-200 rounded-full">
+                    <div id="progress-bar" 
+                         class="h-full bg-primary rounded-full transition-all duration-500"
+                         style="width: {{ progress }}%"></div>
+                </div>
+                
+                <!-- Status Points -->
+                <div class="flex justify-between mt-4">
+                    <div class="flex flex-col items-center relative">
+                        <div id="status-confirmed" 
+                             class="w-8 h-8 rounded-full flex items-center justify-center {{ 'bg-primary text-white' if order.status in ['confirmed', 'preparing', 'out_for_delivery', 'delivered'] else 'bg-gray-200' }}">
+                            <i class="fas fa-check"></i>
+                        </div>
+                        <span class="text-sm font-medium mt-2">Confirmed</span>
+                    </div>
+                    <div class="flex flex-col items-center">
+                        <div id="status-preparing" 
+                             class="w-8 h-8 rounded-full flex items-center justify-center {{ 'bg-primary text-white' if order.status in ['preparing', 'out_for_delivery', 'delivered'] else 'bg-gray-200' }}">
+                            <i class="fas fa-utensils"></i>
+                        </div>
+                        <span class="text-sm font-medium mt-2">Preparing</span>
+                    </div>
+                    <div class="flex flex-col items-center">
+                        <div id="status-delivery" 
+                             class="w-8 h-8 rounded-full flex items-center justify-center {{ 'bg-primary text-white' if order.status in ['out_for_delivery', 'delivered'] else 'bg-gray-200' }}">
+                            <i class="fas fa-truck"></i>
+                        </div>
+                        <span class="text-sm font-medium mt-2">Out for Delivery</span>
+                    </div>
+                    <div class="flex flex-col items-center">
+                        <div id="status-delivered" 
+                             class="w-8 h-8 rounded-full flex items-center justify-center {{ 'bg-primary text-white' if order.status == 'delivered' else 'bg-gray-200' }}">
+                            <i class="fas fa-flag-checkered"></i>
+                        </div>
+                        <span class="text-sm font-medium mt-2">Delivered</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Estimated Time -->
+        <div class="bg-gray-50 rounded-xl p-6 mb-8">
+            <div class="flex items-center justify-between">
+                <div class="flex items-center">
+                    <div class="w-12 h-12 bg-primary/10 rounded-full flex items-center justify-center">
+                        <i class="fas fa-clock text-primary text-xl"></i>
+                    </div>
+                    <div class="ml-4">
+                        <h3 class="font-semibold text-gray-900">Estimated Delivery Time</h3>
+                        <p id="estimated-time" class="text-gray-600">{{ estimated_time }}</p>
+                    </div>
+                </div>
+                <div id="countdown" class="text-3xl font-bold text-primary"></div>
+            </div>
+        </div>
+
+        <!-- Delivery Details -->
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div class="bg-gray-50 rounded-xl p-6">
+                <h3 class="font-semibold text-gray-900 mb-4">Delivery Address</h3>
+                <div class="flex items-start">
+                    <i class="fas fa-map-marker-alt text-primary mt-1"></i>
+                    <div class="ml-4">
+                        <p class="text-gray-900">{{ order.delivery_address.street }}</p>
+                        <p class="text-gray-600">{{ order.delivery_address.city }}, {{ order.delivery_address.state }}</p>
+                        <p class="text-gray-600">{{ order.delivery_address.postal_code }}</p>
+                    </div>
+                </div>
+            </div>
+            <div class="bg-gray-50 rounded-xl p-6">
+                <h3 class="font-semibold text-gray-900 mb-4">Order Details</h3>
+                <div class="space-y-3">
+                    {% for item in order.items %}
+                    <div class="flex justify-between">
+                        <span class="text-gray-600">{{ item.quantity }}x {{ item.name }}</span>
+                        <span class="text-gray-900">${{ "%.2f"|format(item.price * item.quantity) }}</span>
+                    </div>
+                    {% endfor %}
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
+<script>
+    // Connect to WebSocket
+    const socket = io();
+    const orderId = '{{ order.order_id }}';
+    
+    // Listen for status updates
+    socket.on('status_update', function(data) {
+        if (data.order_id === orderId) {
+            updateStatus(data.status);
+            updateProgress(data.progress);
+            if (data.estimated_time) {
+                updateEstimatedTime(data.estimated_time);
+            }
+        }
+    });
+
+    function updateStatus(status) {
+        const statusMap = {
+            'confirmed': 1,
+            'preparing': 2,
+            'out_for_delivery': 3,
+            'delivered': 4
+        };
+        
+        const currentStep = statusMap[status];
+        
+        ['confirmed', 'preparing', 'delivery', 'delivered'].forEach((step, index) => {
+            const element = document.getElementById(`status-${step}`);
+            if (index < currentStep) {
+                element.classList.remove('bg-gray-200');
+                element.classList.add('bg-primary', 'text-white');
+            }
+        });
+    }
+
+    function updateProgress(progress) {
+        document.getElementById('progress-bar').style.width = `${progress}%`;
+    }
+
+    function updateEstimatedTime(time) {
+        document.getElementById('estimated-time').textContent = time;
+    }
+
+    // Initialize countdown timer
+    function updateCountdown() {
+        const deliveryTime = new Date('{{ estimated_delivery_time }}').getTime();
+        const now = new Date().getTime();
+        const distance = deliveryTime - now;
+
+        if (distance > 0) {
+            const hours = Math.floor(distance / (1000 * 60 * 60));
+            const minutes = Math.floor((distance % (1000 * 60 * 60)) / (1000 * 60));
+            document.getElementById('countdown').textContent = 
+                `${hours}h ${minutes}m`;
+        } else {
+            document.getElementById('countdown').textContent = 'Arrived';
+        }
+    }
+
+    // Update countdown every minute
+    updateCountdown();
+    setInterval(updateCountdown, 60000);
+</script>
+{% endblock %} 

@@ -1,11 +1,12 @@
 from flask import Flask, render_template, request, redirect, url_for, flash, jsonify
 from flask_pymongo import PyMongo
 from flask_login import LoginManager, UserMixin, login_user, login_required, logout_user, current_user
+from flask_socketio import SocketIO, emit
 from werkzeug.security import generate_password_hash, check_password_hash
 import os
 from dotenv import load_dotenv
 from bson.objectid import ObjectId
-from datetime import datetime
+from datetime import datetime, timedelta
 
 # Load environment variables
 load_dotenv()
@@ -21,6 +22,9 @@ mongo = PyMongo(app)
 login_manager = LoginManager()
 login_manager.init_app(app)
 login_manager.login_view = 'login'
+
+# Initialize SocketIO
+socketio = SocketIO(app)
 
 class User(UserMixin):
     def __init__(self, user_data):
@@ -250,6 +254,88 @@ def update_cart_quantity():
     except Exception as e:
         return jsonify({'status': 'error', 'message': str(e)}), 400
 
+# Order Tracking Routes
+@app.route('/order/<order_id>')
+@login_required
+def track_order(order_id):
+    order = mongo.db.orders.find_one({'order_id': order_id})
+    if not order:
+        flash('Order not found')
+        return redirect(url_for('index'))
+    
+    # Calculate progress based on status
+    status_progress = {
+        'confirmed': 25,
+        'preparing': 50,
+        'out_for_delivery': 75,
+        'delivered': 100
+    }
+    progress = status_progress.get(order['status'], 0)
+    
+    # Calculate estimated delivery time
+    base_time = order['created_at']
+    if order['status'] == 'confirmed':
+        estimated_time = "45-60 minutes"
+        estimated_delivery_time = base_time + timedelta(minutes=60)
+    elif order['status'] == 'preparing':
+        estimated_time = "30-45 minutes"
+        estimated_delivery_time = base_time + timedelta(minutes=45)
+    elif order['status'] == 'out_for_delivery':
+        estimated_time = "15-20 minutes"
+        estimated_delivery_time = base_time + timedelta(minutes=20)
+    else:
+        estimated_time = "Delivered"
+        estimated_delivery_time = base_time + timedelta(minutes=0)
+
+    return render_template('order_tracking.html',
+                         order=order,
+                         progress=progress,
+                         estimated_time=estimated_time,
+                         estimated_delivery_time=estimated_delivery_time.isoformat())
+
+# WebSocket event handlers
+@socketio.on('connect')
+def handle_connect():
+    print('Client connected')
+
+@socketio.on('disconnect')
+def handle_disconnect():
+    print('Client disconnected')
+
+def update_order_status(order_id, status):
+    """Update order status and notify clients via WebSocket"""
+    order = mongo.db.orders.find_one_and_update(
+        {'order_id': order_id},
+        {'$set': {'status': status}},
+        return_document=True
+    )
+    
+    if order:
+        status_progress = {
+            'confirmed': 25,
+            'preparing': 50,
+            'out_for_delivery': 75,
+            'delivered': 100
+        }
+        
+        # Calculate estimated time based on status
+        if status == 'confirmed':
+            estimated_time = "45-60 minutes"
+        elif status == 'preparing':
+            estimated_time = "30-45 minutes"
+        elif status == 'out_for_delivery':
+            estimated_time = "15-20 minutes"
+        else:
+            estimated_time = "Delivered"
+        
+        # Emit update to all clients
+        socketio.emit('status_update', {
+            'order_id': order_id,
+            'status': status,
+            'progress': status_progress.get(status, 0),
+            'estimated_time': estimated_time
+        })
+
 # Context processors
 @app.context_processor
 def utility_processor():
@@ -267,4 +353,4 @@ def internal_server_error(e):
     return render_template('errors/500.html'), 500
 
 if __name__ == '__main__':
-    app.run(debug=True) 
+    socketio.run(app, debug=True) 

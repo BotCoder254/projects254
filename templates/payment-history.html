@@ -1,0 +1,108 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="bg-gray-100 min-h-screen py-12">
+    <div class="container mx-auto px-4">
+        <div class="max-w-4xl mx-auto">
+            <h1 class="text-3xl font-bold text-gray-900 mb-8">Payment History</h1>
+            
+            {% if orders %}
+            <div class="space-y-6">
+                {% for order in orders %}
+                <div class="bg-white rounded-2xl shadow-lg p-6">
+                    <div class="flex justify-between items-start mb-4">
+                        <div>
+                            <h2 class="text-xl font-semibold text-gray-900">Order #{{ order.number }}</h2>
+                            <p class="text-sm text-gray-500">{{ order.formatted_date }}</p>
+                        </div>
+                        <div class="text-right">
+                            <p class="text-lg font-bold text-gray-900">${{ "%.2f"|format(order.total) }}</p>
+                            <span class="inline-flex items-center px-3 py-1 rounded-full text-sm font-medium
+                                {% if order.payment.status == 'completed' %}
+                                    bg-green-100 text-green-800
+                                {% else %}
+                                    bg-yellow-100 text-yellow-800
+                                {% endif %}">
+                                {{ order.payment.status_display }}
+                            </span>
+                        </div>
+                    </div>
+                    
+                    <div class="border-t border-gray-200 pt-4">
+                        <h3 class="text-lg font-semibold mb-3">Order Items</h3>
+                        <div class="space-y-3">
+                            {% for item in order.items %}
+                            <div class="flex justify-between items-center">
+                                <div class="flex items-center">
+                                    {% if item.image_url %}
+                                    <img src="{{ item.image_url }}" alt="{{ item.name }}" class="w-12 h-12 object-cover rounded-lg">
+                                    {% endif %}
+                                    <div class="ml-4">
+                                        <p class="font-medium">{{ item.name }}</p>
+                                        <p class="text-sm text-gray-500">Quantity: {{ item.quantity }}</p>
+                                    </div>
+                                </div>
+                                <span class="font-medium">${{ "%.2f"|format(item.price * item.quantity) }}</span>
+                            </div>
+                            {% endfor %}
+                        </div>
+                    </div>
+                    
+                    <div class="border-t border-gray-200 mt-4 pt-4">
+                        <div class="flex justify-between items-center">
+                            <div>
+                                <p class="text-sm text-gray-600">Payment Method: M-Pesa</p>
+                                {% if order.payment.transaction_id %}
+                                <p class="text-sm text-gray-600">Transaction ID: {{ order.payment.transaction_id }}</p>
+                                {% endif %}
+                            </div>
+                            {% if order.payment.status == 'completed' %}
+                                {% if not order.receipt_downloaded %}
+                                <a href="{{ url_for('download_receipt', order_id=order._id) }}" 
+                                   class="inline-flex items-center px-4 py-2 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 bg-white hover:bg-gray-50">
+                                    <i class="fas fa-download mr-2"></i>
+                                    Download Receipt
+                                </a>
+                                {% else %}
+                                <span class="inline-flex items-center px-4 py-2 bg-gray-100 rounded-lg text-sm font-medium text-gray-500">
+                                    <i class="fas fa-check mr-2"></i>
+                                    Receipt Downloaded
+                                </span>
+                                {% endif %}
+                            {% endif %}
+                        </div>
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+            {% else %}
+            <div class="bg-white rounded-2xl shadow-lg p-8 text-center">
+                <div class="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                    <i class="fas fa-receipt text-3xl text-gray-400"></i>
+                </div>
+                <h2 class="text-xl font-semibold text-gray-900 mb-2">No Payment History</h2>
+                <p class="text-gray-500 mb-6">You haven't made any orders yet.</p>
+                <a href="{{ url_for('menu') }}" 
+                   class="inline-flex items-center px-6 py-3 bg-primary text-white rounded-lg hover:bg-opacity-90 transition-all">
+                    <i class="fas fa-utensils mr-2"></i>
+                    Browse Menu
+                </a>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+
+<script>
+    // Socket.IO connection
+    var socket = io();
+    
+    // Listen for order updates
+    socket.on('order_update', function(data) {
+        if (data.action === 'receipt_downloaded') {
+            // Refresh the page to update receipt download status
+            location.reload();
+        }
+    });
+</script>
+{% endblock %} 

@@ -1786,7 +1786,7 @@ def check_payment_status():
                         'id': order_id,
                         'number': order['number']
                     },
-                    'redirect_url': url_for('order_confirmation')
+                    'redirect_url': url_for('payment_history')  # Changed redirect to payment history
                 }), 200
             
             # Check for processing status
@@ -1922,13 +1922,137 @@ def order_confirmation():
         flash('Error loading order confirmation', 'error')
         return redirect(url_for('menu'))
 
+@app.route('/payment-history')
+def payment_history():
+    try:
+        processed_orders = []
+        
+        # Get user's orders with proper error handling
+        if current_user.is_authenticated:
+            try:
+                orders = list(mongo.db.orders.find(
+                    {'user_id': str(current_user.get_id())},
+                    sort=[('created_at', -1)]
+                ))
+            except Exception as e:
+                logging.error(f"Database error for authenticated user: {str(e)}")
+                orders = []
+        else:
+            # For guest users, get orders from session history with validation
+            session_orders = session.get('order_history', [])
+            if not isinstance(session_orders, list):
+                session_orders = []
+            
+            # Convert string IDs to ObjectId with error handling
+            order_ids = []
+            for order_id in session_orders:
+                try:
+                    order_ids.append(ObjectId(order_id))
+                except Exception as e:
+                    logging.error(f"Invalid order ID in session: {str(e)}")
+                    continue
+            
+            try:
+                orders = list(mongo.db.orders.find(
+                    {'_id': {'$in': order_ids}},
+                    sort=[('created_at', -1)]
+                )) if order_ids else []
+            except Exception as e:
+                logging.error(f"Database error for guest user: {str(e)}")
+                orders = []
+
+        # Process orders with proper validation
+        for order in orders:
+            try:
+                processed_order = {
+                    '_id': str(order['_id']),
+                    'number': order.get('number', 'N/A'),
+                    'total': float(order.get('total', 0)),
+                    'status': order.get('status', 'pending'),
+                    'items': [],
+                    'payment': {
+                        'method': 'mpesa',
+                        'status': 'completed',
+                        'transaction_id': order.get('payment', {}).get('transaction_id', ''),
+                        'phone': order.get('payment', {}).get('phone', '')
+                    }
+                }
+                
+                # Handle date formatting
+                try:
+                    if isinstance(order.get('created_at'), str):
+                        processed_order['created_at'] = datetime.strptime(order['created_at'], '%Y-%m-%d %H:%M:%S')
+                    else:
+                        processed_order['created_at'] = order.get('created_at', datetime.now())
+                except Exception as e:
+                    logging.error(f"Date parsing error: {str(e)}")
+                    processed_order['created_at'] = datetime.now()
+                
+                processed_order['formatted_date'] = processed_order['created_at'].strftime('%B %d, %Y at %I:%M %p')
+                
+                # Format status displays
+                processed_order['status_display'] = processed_order['status'].title()
+                processed_order['payment']['status_display'] = processed_order['payment']['status'].title()
+                
+                # Check receipt download status
+                try:
+                    processed_order['receipt_downloaded'] = mongo.db.downloads.find_one({
+                        'order_id': processed_order['_id'],
+                        'type': 'receipt'
+                    }) is not None
+                except Exception as e:
+                    logging.error(f"Error checking receipt status: {str(e)}")
+                    processed_order['receipt_downloaded'] = False
+                
+                # Process items with validation
+                for item in order.get('items', []):
+                    try:
+                        processed_item = {
+                            'id': str(item['id']) if isinstance(item.get('id'), ObjectId) else str(item.get('id', '')),
+                            'name': item.get('name', 'Unknown Item'),
+                            'price': float(item.get('price', 0)),
+                            'quantity': int(item.get('quantity', 1)),
+                            'image_url': item.get('image_url', '')
+                        }
+                        processed_order['items'].append(processed_item)
+                    except Exception as e:
+                        logging.error(f"Error processing item: {str(e)}")
+                        continue
+                
+                processed_orders.append(processed_order)
+                
+            except Exception as e:
+                logging.error(f"Error processing order {order.get('_id', 'Unknown')}: {str(e)}")
+                continue
+
+        # Set up real-time updates via Socket.IO
+        socketio.emit('init_orders', {'orders': processed_orders})
+        
+        return render_template('payment-history.html', 
+                             orders=processed_orders)
+                             
+    except Exception as e:
+        logging.error(f"Error in payment history route: {str(e)}")
+        return render_template('payment-history.html', 
+                             orders=[],
+                             error="Unable to load payment history. Please try again later.")
+
 @app.route('/download-receipt/<order_id>')
 def download_receipt(order_id):
     try:
+        # Check if receipt has already been downloaded
+        if mongo.db.downloads.find_one({
+            'order_id': order_id,
+            'type': 'receipt'
+        }):
+            flash('Receipt has already been downloaded', 'error')
+            return redirect(url_for('payment_history'))
+            
         # Get order details
         order = mongo.db.orders.find_one({'_id': ObjectId(order_id)})
         if not order:
-            abort(404)
+            flash('Order not found', 'error')
+            return redirect(url_for('payment_history'))
             
         # Generate PDF receipt
         pdf = PDF()
@@ -1973,18 +2097,34 @@ def download_receipt(order_id):
         pdf.cell(0, 10, 'Payment Information', 0, 1)
         pdf.set_font('Arial', '', 12)
         pdf.cell(0, 10, f"Method: M-Pesa", 0, 1)
-        pdf.cell(0, 10, f"Transaction ID: {order['payment']['transaction_id']}", 0, 1)
+        pdf.cell(0, 10, f"Transaction ID: {order['payment'].get('transaction_id', 'N/A')}", 0, 1)
+        pdf.cell(0, 10, f"Phone: {order['payment'].get('phone', 'N/A')}", 0, 1)
+        
+        # Record download
+        mongo.db.downloads.insert_one({
+            'order_id': order_id,
+            'type': 'receipt',
+            'downloaded_at': datetime.now(),
+            'user_id': str(current_user.get_id()) if current_user.is_authenticated else None
+        })
         
         # Generate the PDF
         response = make_response(pdf.output(dest='S').encode('latin1'))
         response.headers['Content-Type'] = 'application/pdf'
         response.headers['Content-Disposition'] = f'attachment; filename=receipt_{order["number"]}.pdf'
         
+        # Emit real-time update
+        socketio.emit('order_update', {
+            'order_id': order_id,
+            'action': 'receipt_downloaded'
+        })
+        
         return response
         
     except Exception as e:
-        app.logger.error(f"Error generating receipt: {str(e)}")
-        abort(500)
+        logging.error(f"Error generating receipt: {str(e)}")
+        flash('Error generating receipt', 'error')
+        return redirect(url_for('payment_history'))
 
 if __name__ == '__main__':
     socketio.run(app, debug=True) 

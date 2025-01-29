@@ -46,13 +46,17 @@ document.addEventListener('DOMContentLoaded', function() {
 // Smooth scroll
 document.querySelectorAll('a[href^="#"]').forEach(anchor => {
     anchor.addEventListener('click', function(e) {
-        e.preventDefault();
-        const target = document.querySelector(this.getAttribute('href'));
-        if (target) {
-            target.scrollIntoView({
-                behavior: 'smooth',
-                block: 'start'
-            });
+        const href = this.getAttribute('href');
+        // Only handle smooth scroll for fragment identifiers that are not just '#'
+        if (href && href !== '#') {
+            e.preventDefault();
+            const target = document.querySelector(href);
+            if (target) {
+                target.scrollIntoView({
+                    behavior: 'smooth',
+                    block: 'start'
+                });
+            }
         }
     });
 });
@@ -139,9 +143,20 @@ document.addEventListener('DOMContentLoaded', function() {
             if (data.cart) {
                 localStorage.setItem('cart', JSON.stringify(data.cart));
                 updateCartCount();
-                // If we're on the cart page, update the UI
-                if (window.location.pathname === '/cart') {
-                    window.location.reload(); // Refresh to show updated cart
+                // If we're on the cart page or payment history page, update the UI
+                const currentPath = window.location.pathname;
+                if (currentPath === '/cart' || currentPath === '/payment-history') {
+                    window.location.reload();
+                }
+            }
+        });
+        
+        // Listen for order updates
+        socket.on('order_update', function(data) {
+            if (data.action === 'receipt_downloaded') {
+                // Refresh the page to update receipt download status
+                if (window.location.pathname === '/payment-history') {
+                    location.reload();
                 }
             }
         });
@@ -171,13 +186,25 @@ document.addEventListener('DOMContentLoaded', function() {
     .catch(error => {
         console.error('Error loading cart:', error);
     });
+    
+    // Handle navigation links
+    document.querySelectorAll('a[href]').forEach(link => {
+        link.addEventListener('click', function(e) {
+            const href = this.getAttribute('href');
+            // Don't interfere with fragment identifiers or external links
+            if (href && !href.startsWith('#') && !href.startsWith('http')) {
+                // Normal navigation will proceed
+                return;
+            }
+        });
+    });
 });
 
 // Update cart count in UI
 function updateCartCount() {
     const cart = JSON.parse(localStorage.getItem('cart') || '[]');
     const totalItems = cart.reduce((sum, item) => sum + (parseInt(item.quantity) || 0), 0);
-    const cartCount = document.getElementById('cart-count');
+    const cartCount = document.querySelector('[data-cart-count]');
     
     if (cartCount) {
         if (totalItems > 0) {

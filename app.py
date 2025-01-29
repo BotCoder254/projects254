@@ -1827,54 +1827,96 @@ def check_payment_status():
 @app.route('/order-confirmation')
 def order_confirmation():
     try:
+        # Get last order from session
         last_order = session.get('last_order')
         if not last_order or not last_order.get('_id'):
+            logging.error("No order found in session")
             flash('No order found', 'error')
             return redirect(url_for('menu'))
         
         # Get full order details from database
-        order = mongo.db.orders.find_one({'_id': ObjectId(last_order['_id'])})
+        try:
+            order = mongo.db.orders.find_one({'_id': ObjectId(last_order['_id'])})
+        except Exception as e:
+            logging.error(f"Error fetching order from database: {str(e)}")
+            flash('Order not found', 'error')
+            return redirect(url_for('menu'))
+            
         if not order:
+            logging.error(f"Order not found with ID: {last_order['_id']}")
             flash('Order not found', 'error')
             return redirect(url_for('menu'))
         
         # Convert ObjectId to string
         order['_id'] = str(order['_id'])
         
-        # Ensure items is a list
-        if 'items' not in order or not order['items']:
-            order['items'] = []
-        elif isinstance(order['items'], dict):
-            order['items'] = [order['items']]
+        # Ensure all required fields exist with defaults
+        order_data = {
+            'number': order.get('number', 'N/A'),
+            'items': [],
+            'total': float(order.get('total', 0)),
+            'status': order.get('status', 'pending'),
+            'created_at': order.get('created_at', datetime.now()),
+            'payment': {
+                'method': 'mpesa',
+                'status': 'completed',
+                'transaction_id': order.get('payment', {}).get('transaction_id', ''),
+                'phone': order.get('payment', {}).get('phone', ''),
+            },
+            'customer': {
+                'name': order.get('customer', {}).get('name', 'Guest User'),
+                'email': order.get('customer', {}).get('email', ''),
+                'phone': order.get('customer', {}).get('phone', ''),
+                'address': order.get('customer', {}).get('address', '')
+            }
+        }
         
-        # Convert any ObjectId in items to string
-        for item in order['items']:
-            if 'id' in item and isinstance(item['id'], ObjectId):
-                item['id'] = str(item['id'])
+        # Process order items
+        for item in order.get('items', []):
+            try:
+                item_data = {
+                    'id': str(item['id']) if isinstance(item.get('id'), ObjectId) else item.get('id', ''),
+                    'name': item.get('name', 'Unknown Item'),
+                    'price': float(item.get('price', 0)),
+                    'quantity': int(item.get('quantity', 1)),
+                    'image_url': item.get('image_url', ''),
+                    'category': ''
+                }
+                
+                # Get additional menu item details if possible
+                if item.get('id'):
+                    try:
+                        menu_item = mongo.db.menu.find_one({'_id': ObjectId(item_data['id'])})
+                        if menu_item:
+                            item_data['category'] = menu_item.get('category', '')
+                            if menu_item.get('images'):
+                                item_data['image_url'] = menu_item['images'][0]
+                    except Exception as e:
+                        logging.error(f"Error fetching menu item details: {str(e)}")
+                
+                order_data['items'].append(item_data)
+            except Exception as e:
+                logging.error(f"Error processing order item: {str(e)}")
+                continue
         
         # Format dates
-        if 'created_at' in order:
-            if isinstance(order['created_at'], str):
-                try:
-                    order['created_at'] = datetime.strptime(order['created_at'], '%Y-%m-%d %H:%M:%S')
-                except ValueError:
-                    order['created_at'] = datetime.now()
-            elif not isinstance(order['created_at'], datetime):
-                order['created_at'] = datetime.now()
+        try:
+            if isinstance(order_data['created_at'], str):
+                order_data['created_at'] = datetime.strptime(order_data['created_at'], '%Y-%m-%d %H:%M:%S')
+            order_data['formatted_date'] = order_data['created_at'].strftime('%B %d, %Y at %I:%M %p')
+        except Exception as e:
+            logging.error(f"Error formatting date: {str(e)}")
+            order_data['formatted_date'] = datetime.now().strftime('%B %d, %Y at %I:%M %p')
         
-        # Ensure total exists
-        if 'total' not in order:
-            order['total'] = sum(float(item.get('price', 0)) * int(item.get('quantity', 0)) for item in order['items'])
+        # Format status displays
+        order_data['status_display'] = order_data['status'].title()
+        order_data['payment']['status_display'] = order_data['payment']['status'].title()
         
-        # Ensure payment info exists
-        if 'payment' not in order:
-            order['payment'] = {
-                'method': 'mpesa',
-                'status': 'completed'
-            }
-        
-        return render_template('order-confirmation.html', order=order)
-        
+        return render_template('order-confirmation.html',
+                             order=order_data,
+                             payment_status=order_data['payment']['status_display'],
+                             order_status=order_data['status_display'])
+    
     except Exception as e:
         logging.error(f"Error in order confirmation: {str(e)}")
         flash('Error loading order confirmation', 'error')

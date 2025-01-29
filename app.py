@@ -1730,12 +1730,17 @@ def check_payment_status():
             if result.get('ResultCode') == '0':
                 # Create order
                 cart = session.get('cart', [])
-                total = sum(float(item['price']) * int(item['quantity']) for item in cart)
+                # Convert any ObjectId in cart items to string
+                for item in cart:
+                    if 'id' in item and isinstance(item['id'], ObjectId):
+                        item['id'] = str(item['id'])
                 
+                total = sum(float(item['price']) * int(item['quantity']) for item in cart)
                 current_time = datetime.now()
+                
                 order = {
                     'number': 'ORD' + str(random.randint(10000, 99999)),
-                    'user_id': current_user.get_id() if not current_user.is_anonymous else None,
+                    'user_id': str(current_user.get_id()) if not current_user.is_anonymous else None,
                     'items': cart,
                     'total': total,
                     'payment': {
@@ -1752,22 +1757,30 @@ def check_payment_status():
                 
                 # Save order and update session
                 order_result = mongo.db.orders.insert_one(order)
+                order_id = str(order_result.inserted_id)
+                
                 session['last_order'] = {
                     'number': order['number'],
                     'total': total,
-                    '_id': str(order_result.inserted_id)
+                    '_id': order_id
                 }
                 session.pop('cart', None)
                 
+                # Prepare socket order data
+                socket_order = {
+                    **order,
+                    '_id': order_id,
+                    'created_at': current_time.strftime('%Y-%m-%d %H:%M:%S')
+                }
+                
                 # Notify admin
-                socket_order = {**order, 'created_at': current_time.strftime('%Y-%m-%d %H:%M:%S')}
                 socketio.emit('new_order', {'order': socket_order}, room='admin')
                 
                 return jsonify({
                     **result,
                     'ResponseCode': result.get('ResponseCode', '0'),
                     'order': {
-                        'id': str(order_result.inserted_id),
+                        'id': order_id,
                         'number': order['number']
                     }
                 }), 200

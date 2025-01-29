@@ -26,9 +26,10 @@ RUN mkdir -p static/uploads/menu
 ENV FLASK_APP=app.py
 ENV FLASK_ENV=production
 ENV PYTHONUNBUFFERED=1
+ENV GUNICORN_CMD_ARGS="--config=gunicorn.conf.py"
 
 # Expose port
 EXPOSE 8000
 
 # Start the application with gunicorn
-CMD gunicorn --worker-class gevent --workers 1 --bind 0.0.0.0:8000 app:app --log-level debug 
+CMD ["gunicorn", "--config=gunicorn.conf.py", "--preload", "--worker-class=gevent", "--workers=1", "--bind=0.0.0.0:8000", "app:app"] 

@@ -10,13 +10,17 @@ backlog = 2048
 workers = 1
 worker_class = 'gevent'
 worker_connections = 1000
-timeout = 30
-keepalive = 2
+timeout = 120
+keepalive = 5
+max_requests = 1000
+max_requests_jitter = 50
 
 # Logging
 accesslog = '-'
 errorlog = '-'
 loglevel = 'debug'
+capture_output = True
+enable_stdio_inheritance = True
 
 # Process naming
 proc_name = 'foodiehub'
@@ -39,6 +43,7 @@ fd = None
 # Debugging
 reload = False
 reload_engine = 'auto'
+preload_app = True
 
 # Server hooks
 def on_starting(server):

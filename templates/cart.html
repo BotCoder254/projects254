@@ -143,32 +143,32 @@ function updateCartUI(cartData) {
         itemElement.dataset.id = item.id;
         itemElement.innerHTML = `
             <img class="h-20 w-20 object-cover rounded-lg" src="${item.image_url}" alt="${item.name}">
-            <div class="ml-4 flex-1">
+        <div class="ml-4 flex-1">
                 <h4 class="text-lg font-semibold">${item.name}</h4>
-                <div class="flex items-center mt-2">
-                    <div class="flex items-center space-x-2">
-                        <button onclick="decrementQuantity(this)" 
-                                class="w-8 h-8 rounded-full bg-gray-100 hover:bg-gray-200 flex items-center justify-center transition-colors">
-                            <i class="fas fa-minus text-gray-600"></i>
-                        </button>
+            <div class="flex items-center mt-2">
+                <div class="flex items-center space-x-2">
+                    <button onclick="decrementQuantity(this)" 
+                            class="w-8 h-8 rounded-full bg-gray-100 hover:bg-gray-200 flex items-center justify-center transition-colors">
+                        <i class="fas fa-minus text-gray-600"></i>
+                    </button>
                         <input type="number" value="${item.quantity}" min="1" 
-                               class="w-12 text-center border-gray-200 rounded-lg focus:ring-primary focus:border-primary"
-                               onchange="updateQuantity(this)">
-                        <button onclick="incrementQuantity(this)"
-                                class="w-8 h-8 rounded-full bg-gray-100 hover:bg-gray-200 flex items-center justify-center transition-colors">
-                            <i class="fas fa-plus text-gray-600"></i>
-                        </button>
-                    </div>
+                           class="w-12 text-center border-gray-200 rounded-lg focus:ring-primary focus:border-primary"
+                           onchange="updateQuantity(this)">
+                    <button onclick="incrementQuantity(this)"
+                            class="w-8 h-8 rounded-full bg-gray-100 hover:bg-gray-200 flex items-center justify-center transition-colors">
+                        <i class="fas fa-plus text-gray-600"></i>
+                    </button>
                 </div>
             </div>
-            <div class="ml-4 flex flex-col items-end">
+        </div>
+        <div class="ml-4 flex flex-col items-end">
                 <span class="text-lg font-semibold item-price">$${(item.price * item.quantity).toFixed(2)}</span>
-                <button onclick="removeFromCart(this)" 
-                        class="mt-2 text-red-500 hover:text-red-600 transition-colors flex items-center">
-                    <i class="fas fa-trash mr-1"></i>
-                    Remove
-                </button>
-            </div>
+            <button onclick="removeFromCart(this)" 
+                    class="mt-2 text-red-500 hover:text-red-600 transition-colors flex items-center">
+                <i class="fas fa-trash mr-1"></i>
+                Remove
+            </button>
+        </div>
         `;
         
         cartItemsContainer.appendChild(itemElement);
@@ -222,8 +222,8 @@ function removeFromCart(button) {
                 document.getElementById('empty-cart-message').classList.remove('hidden');
                 updateTotals(0);
             } else {
-                updateCartUI();
-            }
+        updateCartUI();
+    }
         }
     });
 }

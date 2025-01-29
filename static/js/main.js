@@ -49,13 +49,13 @@ document.querySelectorAll('a[href^="#"]').forEach(anchor => {
         const href = this.getAttribute('href');
         // Only handle smooth scroll for fragment identifiers that are not just '#'
         if (href && href !== '#') {
-            e.preventDefault();
+        e.preventDefault();
             const target = document.querySelector(href);
-            if (target) {
-                target.scrollIntoView({
-                    behavior: 'smooth',
-                    block: 'start'
-                });
+        if (target) {
+            target.scrollIntoView({
+                behavior: 'smooth',
+                block: 'start'
+            });
             }
         }
     });
@@ -99,11 +99,11 @@ function addToCart(itemId, itemName, price, imageUrl) {
         if (data.status === 'success') {
             // Get existing cart from localStorage or initialize empty array
             let cart = JSON.parse(localStorage.getItem('cart') || '[]');
-            
-            // Check if item already exists in cart
-            const existingItem = cart.find(item => item.id === itemId);
-            
-            if (existingItem) {
+    
+    // Check if item already exists in cart
+    const existingItem = cart.find(item => item.id === itemId);
+    
+    if (existingItem) {
                 existingItem.quantity += quantity;
             } else {
                 cart.push(cartItem);
@@ -122,7 +122,7 @@ function addToCart(itemId, itemName, price, imageUrl) {
             if (typeof socket !== 'undefined') {
                 socket.emit('cart_update', { cart: cart });
             }
-        } else {
+    } else {
             showToast('Error adding item to cart', 'error');
         }
     })
@@ -167,7 +167,7 @@ document.addEventListener('DOMContentLoaded', function() {
     .then(response => response.json())
     .then(cart => {
         if (Array.isArray(cart)) {
-            localStorage.setItem('cart', JSON.stringify(cart));
+    localStorage.setItem('cart', JSON.stringify(cart));
             updateCartCount();
             
             // Sync with server if there's a difference
@@ -208,7 +208,7 @@ function updateCartCount() {
     
     if (cartCount) {
         if (totalItems > 0) {
-            cartCount.textContent = totalItems;
+        cartCount.textContent = totalItems;
             cartCount.classList.remove('hidden');
         } else {
             cartCount.textContent = '';

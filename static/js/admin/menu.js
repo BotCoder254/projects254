@@ -2,7 +2,7 @@
 
 // Initialize socket connection if not already initialized
 if (typeof socket === 'undefined') {
-    let socket = io();
+let socket = io();
 }
 
 // Socket.IO event listeners
@@ -229,20 +229,20 @@ function handleImageUpload(event) {
         processedFiles.add(file.name);
         const reader = new FileReader();
         reader.onload = function(e) {
-            if (index === 0) {
-                const previewImage = document.getElementById('previewImage');
+        if (index === 0) {
+            const previewImage = document.getElementById('previewImage');
                 previewImage.style.backgroundImage = `url(${e.target.result})`;
-            }
-            
-            const preview = document.createElement('div');
-            preview.className = 'relative aspect-square';
-            preview.innerHTML = `
+        }
+        
+        const preview = document.createElement('div');
+        preview.className = 'relative aspect-square';
+        preview.innerHTML = `
                 <img src="${e.target.result}" class="w-full h-full object-cover rounded-lg">
-                <button type="button" onclick="removeImage(this)" class="absolute top-1 right-1 bg-red-500 text-white rounded-full w-6 h-6 flex items-center justify-center">
-                    <i class="fas fa-times"></i>
-                </button>
-            `;
-            container.appendChild(preview);
+            <button type="button" onclick="removeImage(this)" class="absolute top-1 right-1 bg-red-500 text-white rounded-full w-6 h-6 flex items-center justify-center">
+                <i class="fas fa-times"></i>
+            </button>
+        `;
+        container.appendChild(preview);
         };
         reader.readAsDataURL(file);
     });
@@ -265,16 +265,16 @@ function removeImage(button) {
 
 function filterItems() {
     const query = document.getElementById('menuSearch').value;
-    const category = document.getElementById('categoryFilter').value;
-    
-    fetch(`/api/admin/menu/search?q=${query}&category=${category}`)
-        .then(response => response.json())
-        .then(data => {
-            updateMenuTable(data);
-        })
-        .catch(error => {
+            const category = document.getElementById('categoryFilter').value;
+            
+            fetch(`/api/admin/menu/search?q=${query}&category=${category}`)
+                .then(response => response.json())
+                .then(data => {
+                    updateMenuTable(data);
+                })
+                .catch(error => {
             showAlert('An error occurred while filtering');
-            console.error('Error:', error);
+                    console.error('Error:', error);
         });
 }
 

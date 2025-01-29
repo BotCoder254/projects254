@@ -1,24 +1,16 @@
 // Toast notification function
 function showToast(message, type = 'success') {
     const toast = document.createElement('div');
-    toast.className = `toast ${type}`;
-    toast.innerHTML = `
-        <div class="flex items-center">
-            <i class="fas ${type === 'success' ? 'fa-check-circle text-green-500' : 'fa-exclamation-circle text-red-500'} mr-2"></i>
-            <span>${message}</span>
-        </div>
-    `;
+    toast.className = `fixed bottom-4 right-4 px-6 py-3 rounded-lg text-white ${
+        type === 'success' ? 'bg-green-500' : 'bg-red-500'
+    } transition-opacity duration-300`;
+    toast.textContent = message;
+    
     document.body.appendChild(toast);
     
-    // Trigger reflow
-    toast.offsetHeight;
-    
-    // Show toast
-    toast.classList.add('show');
-    
-    // Hide toast after 3 seconds
+    // Fade out and remove after 3 seconds
     setTimeout(() => {
-        toast.classList.remove('show');
+        toast.style.opacity = '0';
         setTimeout(() => {
             document.body.removeChild(toast);
         }, 300);
@@ -76,47 +68,124 @@ if (mobileMenuButton && mobileMenu) {
 }
 
 // Add to cart functionality
-function addToCart(itemId, itemName, price) {
-    // Get existing cart from localStorage or initialize empty array
-    const cart = JSON.parse(localStorage.getItem('cart') || '[]');
+function addToCart(itemId, itemName, price, imageUrl) {
+    // Get quantity if it exists, otherwise default to 1
+    const quantityInput = document.getElementById(`quantity-${itemId}`);
+    const quantity = quantityInput ? parseInt(quantityInput.value) : 1;
     
-    // Check if item already exists in cart
-    const existingItem = cart.find(item => item.id === itemId);
+    // Create cart item
+    const cartItem = {
+        id: itemId,
+        name: itemName,
+        price: parseFloat(price),
+        quantity: quantity,
+        image_url: imageUrl
+    };
     
-    if (existingItem) {
-        existingItem.quantity += 1;
-    } else {
-        cart.push({
-            id: itemId,
-            name: itemName,
-            price: price,
-            quantity: 1
-        });
-    }
-    
-    // Save updated cart
-    localStorage.setItem('cart', JSON.stringify(cart));
-    
-    // Show success message
-    showToast(`${itemName} added to cart!`);
-    
-    // Update cart count in UI
-    updateCartCount();
-}
-
-// Update cart count in UI
-function updateCartCount() {
-    const cart = JSON.parse(localStorage.getItem('cart') || '[]');
-    const totalItems = cart.reduce((sum, item) => sum + item.quantity, 0);
-    
-    const cartCount = document.querySelector('[data-cart-count]');
-    if (cartCount) {
-        cartCount.textContent = totalItems;
-        cartCount.classList.toggle('hidden', totalItems === 0);
-    }
+    // Add to backend first
+    fetch('/api/cart/add', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(cartItem)
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.status === 'success') {
+            // Get existing cart from localStorage or initialize empty array
+            let cart = JSON.parse(localStorage.getItem('cart') || '[]');
+            
+            // Check if item already exists in cart
+            const existingItem = cart.find(item => item.id === itemId);
+            
+            if (existingItem) {
+                existingItem.quantity += quantity;
+            } else {
+                cart.push(cartItem);
+            }
+            
+            // Save updated cart to localStorage
+            localStorage.setItem('cart', JSON.stringify(cart));
+            
+            // Update cart count immediately
+            updateCartCount();
+            
+            // Show success message
+            showToast(`${quantity} x ${itemName} added to cart!`);
+            
+            // Emit cart update event
+            if (typeof socket !== 'undefined') {
+                socket.emit('cart_update', { cart: cart });
+            }
+        } else {
+            showToast('Error adding item to cart', 'error');
+        }
+    })
+    .catch(error => {
+        console.error('Error adding to cart:', error);
+        showToast('Error adding item to cart', 'error');
+    });
 }
 
 // Initialize cart count on page load
 document.addEventListener('DOMContentLoaded', function() {
-    updateCartCount();
-}); 
+    // Initialize Socket.IO
+    if (typeof io !== 'undefined') {
+        window.socket = io();
+        
+        // Listen for cart updates
+        socket.on('cart_update', function(data) {
+            if (data.cart) {
+                localStorage.setItem('cart', JSON.stringify(data.cart));
+                updateCartCount();
+                // If we're on the cart page, update the UI
+                if (window.location.pathname === '/cart') {
+                    window.location.reload(); // Refresh to show updated cart
+                }
+            }
+        });
+    }
+    
+    // Load initial cart data
+    fetch('/api/cart')
+    .then(response => response.json())
+    .then(cart => {
+        if (Array.isArray(cart)) {
+            localStorage.setItem('cart', JSON.stringify(cart));
+            updateCartCount();
+            
+            // Sync with server if there's a difference
+            const localCart = JSON.parse(localStorage.getItem('cart') || '[]');
+            if (JSON.stringify(localCart) !== JSON.stringify(cart)) {
+                fetch('/api/cart/sync', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify(localCart)
+                });
+            }
+        }
+    })
+    .catch(error => {
+        console.error('Error loading cart:', error);
+    });
+});
+
+// Update cart count in UI
+function updateCartCount() {
+    const cart = JSON.parse(localStorage.getItem('cart') || '[]');
+    const totalItems = cart.reduce((sum, item) => sum + (parseInt(item.quantity) || 0), 0);
+    const cartCount = document.getElementById('cart-count');
+    
+    if (cartCount) {
+        if (totalItems > 0) {
+            cartCount.textContent = totalItems;
+            cartCount.classList.remove('hidden');
+        } else {
+            cartCount.textContent = '';
+            cartCount.classList.add('hidden');
+        }
+    }
+} 

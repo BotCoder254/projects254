@@ -1,4 +1,4 @@
-from flask import Flask, render_template, request, redirect, url_for, flash, jsonify, abort
+from flask import Flask, render_template, request, redirect, url_for, flash, jsonify, abort, make_response, session
 from flask_pymongo import PyMongo
 from flask_login import LoginManager, UserMixin, login_user, login_required, logout_user, current_user
 from flask_socketio import SocketIO, emit, join_room
@@ -10,6 +10,11 @@ from datetime import datetime, timedelta
 from functools import wraps
 from passlib.hash import sha256_crypt
 from werkzeug.utils import secure_filename
+import random
+from pdf import PDF
+import requests
+import base64
+import logging
 
 # Load environment variables
 load_dotenv()
@@ -25,6 +30,26 @@ os.makedirs(os.path.join(app.config['UPLOAD_FOLDER'], 'menu'), exist_ok=True)
 # Initialize MongoDB
 mongo = PyMongo(app)
 
+# Update existing menu items with default dietary_info
+def init_menu_items():
+    try:
+        # Update all menu items that don't have dietary_info
+        mongo.db.menu.update_many(
+            {'dietary_info': {'$exists': False}},
+            {'$set': {
+                'dietary_info': {
+                    'vegetarian': False,
+                    'vegan': False,
+                    'gluten_free': False
+                }
+            }}
+        )
+    except Exception as e:
+        app.logger.error(f"Error updating menu items with dietary info: {str(e)}")
+
+# Call initialization function
+init_menu_items()
+
 # Initialize Flask-Login
 login_manager = LoginManager()
 login_manager.init_app(app)
@@ -32,6 +57,9 @@ login_manager.login_view = 'login'
 
 # Initialize SocketIO
 socketio = SocketIO(app)
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
 
 class User(UserMixin):
     def __init__(self, user_data):
@@ -198,8 +226,15 @@ def menu():
     sort_field = 'price' if sort in ['price_asc', 'price_desc'] else 'name'
     sort_direction = -1 if sort == 'price_desc' else 1
 
-    # Get menu items
-    menu_items = mongo.db.menu.find(query).sort(sort_field, sort_direction)
+    # Get menu items and add default dietary_info if missing
+    menu_items = list(mongo.db.menu.find(query).sort(sort_field, sort_direction))
+    for item in menu_items:
+        if 'dietary_info' not in item:
+            item['dietary_info'] = {
+                'vegetarian': False,
+                'vegan': False,
+                'gluten_free': False
+            }
 
     return render_template('menu.html', 
                          menu_items=menu_items,
@@ -211,62 +246,102 @@ def menu():
 
 # Cart Routes
 @app.route('/cart')
-@login_required
 def cart():
-    return render_template('cart.html')
+    try:
+        # Get cart from session or initialize empty
+        cart = session.get('cart', [])
+        
+        # Calculate total
+        total = sum(float(item.get('price', 0)) * int(item.get('quantity', 0)) for item in cart)
+        
+        return render_template('cart.html', cart_items=cart, total=total)
+    except Exception as e:
+        app.logger.error(f"Error loading cart: {str(e)}")
+        flash('Error loading cart', 'error')
+        return redirect(url_for('menu'))
 
 @app.route('/api/cart', methods=['GET'])
-@login_required
 def get_cart():
-    user = mongo.db.users.find_one({'_id': ObjectId(current_user.get_id())})
-    return jsonify(user.get('cart', []))
-
-@app.route('/api/cart/sync', methods=['POST'])
-@login_required
-def sync_cart():
     try:
-        cart_data = request.json
-        mongo.db.users.update_one(
-            {'_id': ObjectId(current_user.get_id())},
-            {'$set': {'cart': cart_data}}
-        )
-        return jsonify({'status': 'success'})
+        cart = session.get('cart', [])
+        return jsonify(cart)
     except Exception as e:
-        return jsonify({'status': 'error', 'message': str(e)}), 400
+        app.logger.error(f"Error getting cart: {str(e)}")
+        return jsonify([])
 
 @app.route('/api/cart/add', methods=['POST'])
-@login_required
 def add_to_cart():
     try:
         item_data = request.json
-        user_id = ObjectId(current_user.get_id())
+        if not item_data:
+            return jsonify({'status': 'error', 'message': 'No data provided'}), 400
+
+        # Get existing cart or initialize empty
+        cart = session.get('cart', [])
         
-        # Update user's cart in MongoDB
-        mongo.db.users.update_one(
-            {'_id': user_id},
-            {'$push': {'cart': item_data}}
-        )
+        # Check if item already exists
+        existing_item = next((item for item in cart if item.get('id') == item_data.get('id')), None)
         
-        return jsonify({'status': 'success'})
+        if existing_item:
+            # Update quantity if item exists
+            existing_item['quantity'] = int(existing_item.get('quantity', 0)) + int(item_data.get('quantity', 1))
+        else:
+            # Add new item to cart
+            cart.append({
+                'id': item_data.get('id'),
+                'name': item_data.get('name'),
+                'price': float(item_data.get('price', 0)),
+                'quantity': int(item_data.get('quantity', 1)),
+                'image_url': item_data.get('image_url')
+            })
+        
+        # Update session
+        session['cart'] = cart
+        
+        # Emit cart update event
+        socketio.emit('cart_update', {'cart': cart})
+        
+        return jsonify({'status': 'success', 'cart': cart})
     except Exception as e:
-        return jsonify({'status': 'error', 'message': str(e)}), 400
+        app.logger.error(f"Error adding to cart: {str(e)}")
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+
+@app.route('/api/cart/sync', methods=['POST'])
+def sync_cart():
+    try:
+        cart_data = request.json
+        if cart_data is not None:
+            session['cart'] = cart_data
+            socketio.emit('cart_update', {'cart': cart_data})
+            return jsonify({'status': 'success'})
+        return jsonify({'status': 'error', 'message': 'Invalid cart data'}), 400
+    except Exception as e:
+        app.logger.error(f"Error syncing cart: {str(e)}")
+        return jsonify({'status': 'error', 'message': str(e)}), 500
 
 @app.route('/api/cart/remove', methods=['POST'])
-@login_required
 def remove_from_cart():
     try:
         item_id = request.json.get('item_id')
-        user_id = ObjectId(current_user.get_id())
+        if not item_id:
+            return jsonify({'status': 'error', 'message': 'No item ID provided'}), 400
         
-        # Remove item from user's cart in MongoDB
-        mongo.db.users.update_one(
-            {'_id': user_id},
-            {'$pull': {'cart': {'id': item_id}}}
-        )
+        # Get cart from session
+        cart = session.get('cart', [])
         
-        return jsonify({'status': 'success'})
+        # Remove item from cart
+        cart = [item for item in cart if item.get('id') != item_id]
+        
+        # Update session
+        session['cart'] = cart
+        
+        # Emit cart update event
+        socketio.emit('cart_update', {'cart': cart})
+        
+        return jsonify({'status': 'success', 'cart': cart})
     except Exception as e:
-        return jsonify({'status': 'error', 'message': str(e)}), 400
+        app.logger.error(f"Error removing from cart: {str(e)}")
+        return jsonify({'status': 'error', 'message': str(e)}), 500
 
 @app.route('/api/cart/update-quantity', methods=['POST'])
 @login_required
@@ -1229,7 +1304,12 @@ def add_menu_item():
             'active': data.get('active', 'true').lower() == 'true',
             'images': image_urls,
             'created_at': current_time,
-            'orders_count': 0
+            'orders_count': 0,
+            'dietary_info': {
+                'vegetarian': data.get('vegetarian', 'false').lower() == 'true',
+                'vegan': data.get('vegan', 'false').lower() == 'true',
+                'gluten_free': data.get('gluten_free', 'false').lower() == 'true'
+            }
         }
         
         # Insert into database
@@ -1297,7 +1377,12 @@ def update_menu_item(item_id):
             'category': category,
             'active': data['active'].lower() == 'true',
             'images': image_urls,
-            'updated_at': datetime.now()
+            'updated_at': datetime.now(),
+            'dietary_info': {
+                'vegetarian': data.get('vegetarian', 'false').lower() == 'true',
+                'vegan': data.get('vegan', 'false').lower() == 'true',
+                'gluten_free': data.get('gluten_free', 'false').lower() == 'true'
+            }
         }
         
         mongo.db.menu.update_one(
@@ -1450,6 +1535,282 @@ app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB max file size
 
 # Create upload folders if they don't exist
 os.makedirs(os.path.join(app.config['UPLOAD_FOLDER'], 'menu'), exist_ok=True)
+
+@app.route('/payment', methods=['GET'])
+def payment():
+    cart = session.get('cart', [])
+    if not cart:
+        flash('Your cart is empty', 'error')
+        return redirect(url_for('menu'))
+    
+    total = sum(item['price'] * item['quantity'] for item in cart)
+    return render_template('payment.html', cart=cart, total=total)
+
+def get_access_token():
+    """Generate OAuth access token."""
+    consumer_key = "frmypHgIJYc7mQuUu5NBvnYc0kF3StP3"
+    consumer_secret = "UAeJAJLNUkV5MLpL"
+    url = "https://api.safaricom.co.ke/oauth/v1/generate?grant_type=client_credentials"
+    
+    # Create auth string and encode to base64
+    auth_string = f"{consumer_key}:{consumer_secret}"
+    auth_bytes = auth_string.encode('ascii')
+    auth_b64 = base64.b64encode(auth_bytes).decode('ascii')
+    
+    headers = {
+        "Authorization": f"Basic {auth_b64}"
+    }
+    
+    try:
+        response = requests.get(url, headers=headers)
+        response.raise_for_status()
+        return response.json()['access_token']
+    except requests.exceptions.RequestException as e:
+        logging.error(f"Error getting access token: {str(e)}")
+        raise
+
+@app.route('/process-payment', methods=['POST'])
+def process_payment():
+    """Process payment using M-Pesa STK Push."""
+    try:
+        data = request.get_json()
+        if not data or 'phone' not in data or 'amount' not in data:
+            return jsonify({
+                'success': False,
+                'message': 'Missing required fields'
+            }), 400
+
+        phone_number = str(data['phone']).strip()
+        amount = data['amount']
+
+        # Format phone number
+        phone_number = phone_number.replace('+', '').replace(' ', '')
+        phone_number = ''.join(filter(str.isdigit, phone_number))
+        if not phone_number.startswith('254'):
+            phone_number = '254' + phone_number.lstrip('0')
+
+        # Get access token
+        access_token = get_access_token()
+        url = "https://api.safaricom.co.ke/mpesa/stkpush/v1/processrequest"
+        timestamp = datetime.now().strftime('%Y%m%d%H%M%S')
+        
+        password_str = f"4121151{'68cb945afece7b529b4a0901b2d8b1bb3bd9daa19bfdb48c69bec8dde962a932'}{timestamp}"
+        password = base64.b64encode(password_str.encode()).decode('utf-8')
+
+        headers = {
+            "Authorization": f"Bearer {access_token}"
+        }
+
+        payload = {
+            "BusinessShortCode": "4121151",
+            "Password": password,
+            "Timestamp": timestamp,
+            "TransactionType": "CustomerPayBillOnline",
+            "Amount": amount,
+            "PartyA": phone_number,
+            "PartyB": "4121151",
+            "PhoneNumber": phone_number,
+            "CallBackURL": "https://github.com/BotCoder254",
+            "AccountReference": "KIOTA",
+            "TransactionDesc": "Food Order Payment"
+        }
+
+        response = requests.post(url, json=payload, headers=headers)
+        response.raise_for_status()
+        result = response.json()
+
+        if result.get('ResponseCode') == "0":
+            # Store checkout request ID for later verification
+            session['checkout_request_id'] = result.get('CheckoutRequestID')
+            return jsonify({
+                'success': True,
+                'message': 'Payment initiated successfully',
+                'checkoutRequestId': result.get('CheckoutRequestID')
+            })
+        else:
+            return jsonify({
+                'success': False,
+                'status': 'FAILED',
+                'message': 'Failed to initiate payment: ' + result.get('ResponseDescription', 'Unknown error')
+            }), 400
+
+    except Exception as e:
+        logging.error(f"Payment error: {str(e)}")
+        return jsonify({
+            'success': False,
+            'message': str(e)
+        }), 500
+
+@app.route('/check-payment-status', methods=['POST'])
+def check_payment_status():
+    """Check payment status using M-Pesa query."""
+    try:
+        data = request.get_json()
+        checkout_request_id = data.get('checkoutRequestId')
+        
+        if not checkout_request_id:
+            return jsonify({
+                'success': False,
+                'message': 'Missing checkout request ID'
+            }), 400
+
+        # Get access token
+        access_token = get_access_token()
+        url = "https://api.safaricom.co.ke/mpesa/stkpushquery/v1/query"
+        timestamp = datetime.now().strftime('%Y%m%d%H%M%S')
+        
+        password_str = f"4121151{'68cb945afece7b529b4a0901b2d8b1bb3bd9daa19bfdb48c69bec8dde962a932'}{timestamp}"
+        password = base64.b64encode(password_str.encode()).decode('utf-8')
+
+        headers = {
+            "Authorization": f"Bearer {access_token}"
+        }
+
+        payload = {
+            "BusinessShortCode": "4121151",
+            "Password": password,
+            "Timestamp": timestamp,
+            "CheckoutRequestID": checkout_request_id
+        }
+
+        response = requests.post(url, json=payload, headers=headers)
+        response.raise_for_status()
+        result = response.json()
+
+        if result.get('ResultCode') == '0':
+            # Payment successful - create order
+            cart = session.get('cart', [])
+            total = sum(item['price'] * item['quantity'] for item in cart)
+            
+            order = {
+                'number': 'ORD' + str(random.randint(10000, 99999)),
+                'user_id': current_user.get_id() if not current_user.is_anonymous else None,
+                'items': cart,
+                'total': total,
+                'payment': {
+                    'method': 'mpesa',
+                    'transaction_id': result.get('MpesaReceiptNumber'),
+                    'phone': result.get('PhoneNumber'),
+                    'amount': total
+                },
+                'status': 'pending',
+                'created_at': datetime.now()
+            }
+            
+            # Save order to database
+            result = mongo.db.orders.insert_one(order)
+            order['_id'] = str(result.inserted_id)
+            
+            # Store order details in session for confirmation page
+            session['last_order'] = {
+                'number': order['number'],
+                'total': total,
+                '_id': str(result.inserted_id)
+            }
+            
+            # Clear cart
+            session.pop('cart', None)
+            
+            # Notify admin about new order
+            socketio.emit('new_order', {'order': order}, room='admin')
+            
+            return jsonify({
+                'success': True,
+                'status': 'COMPLETED',
+                'message': 'Payment completed successfully',
+                'order': order
+            })
+        else:
+            return jsonify({
+                'success': False,
+                'status': 'FAILED',
+                'message': 'Payment verification failed: ' + result.get('ResultDesc', 'Unknown error')
+            })
+
+    except Exception as e:
+        logging.error(f"Payment status check error: {str(e)}")
+        return jsonify({
+            'success': False,
+            'message': str(e)
+        }), 500
+
+@app.route('/order-confirmation')
+def order_confirmation():
+    last_order = session.get('last_order')
+    if not last_order:
+        return redirect(url_for('menu'))
+    
+    # Get full order details from database
+    order = mongo.db.orders.find_one({'_id': ObjectId(last_order['_id'])})
+    if not order:
+        return redirect(url_for('menu'))
+    
+    order['_id'] = str(order['_id'])
+    return render_template('order-confirmation.html', order=order)
+
+@app.route('/download-receipt/<order_id>')
+def download_receipt(order_id):
+    try:
+        # Get order details
+        order = mongo.db.orders.find_one({'_id': ObjectId(order_id)})
+        if not order:
+            abort(404)
+            
+        # Generate PDF receipt
+        pdf = PDF()
+        pdf.add_page()
+        
+        # Header
+        pdf.set_font('Arial', 'B', 16)
+        pdf.cell(0, 10, 'Order Receipt', 0, 1, 'C')
+        pdf.ln(10)
+        
+        # Order details
+        pdf.set_font('Arial', '', 12)
+        pdf.cell(0, 10, f"Order Number: {order['number']}", 0, 1)
+        pdf.cell(0, 10, f"Date: {order['created_at'].strftime('%Y-%m-%d %H:%M')}", 0, 1)
+        pdf.ln(10)
+        
+        # Items
+        pdf.set_font('Arial', 'B', 12)
+        pdf.cell(90, 10, 'Item', 1)
+        pdf.cell(30, 10, 'Quantity', 1)
+        pdf.cell(30, 10, 'Price', 1)
+        pdf.cell(40, 10, 'Total', 1)
+        pdf.ln()
+        
+        pdf.set_font('Arial', '', 12)
+        for item in order['items']:
+            pdf.cell(90, 10, item['name'], 1)
+            pdf.cell(30, 10, str(item['quantity']), 1)
+            pdf.cell(30, 10, f"${item['price']:.2f}", 1)
+            pdf.cell(40, 10, f"${item['price'] * item['quantity']:.2f}", 1)
+            pdf.ln()
+        
+        # Total
+        pdf.ln(10)
+        pdf.set_font('Arial', 'B', 12)
+        pdf.cell(150, 10, 'Total:', 0)
+        pdf.cell(40, 10, f"${order['total']:.2f}", 0)
+        
+        # Payment details
+        pdf.ln(20)
+        pdf.set_font('Arial', 'B', 12)
+        pdf.cell(0, 10, 'Payment Information', 0, 1)
+        pdf.set_font('Arial', '', 12)
+        pdf.cell(0, 10, f"Method: M-Pesa", 0, 1)
+        pdf.cell(0, 10, f"Transaction ID: {order['payment']['transaction_id']}", 0, 1)
+        
+        # Generate the PDF
+        response = make_response(pdf.output(dest='S').encode('latin1'))
+        response.headers['Content-Type'] = 'application/pdf'
+        response.headers['Content-Disposition'] = f'attachment; filename=receipt_{order["number"]}.pdf'
+        
+        return response
+        
+    except Exception as e:
+        app.logger.error(f"Error generating receipt: {str(e)}")
+        abort(500)
 
 if __name__ == '__main__':
     socketio.run(app, debug=True) 

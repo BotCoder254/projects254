@@ -289,8 +289,8 @@ function bulkAction(action) {
     }
         
         if (action === 'delete' && !confirm('Are you sure you want to delete the selected users?')) {
-            return;
-        }
+        return;
+    }
     
     fetch('/api/admin/users/bulk-action', {
         method: 'POST',

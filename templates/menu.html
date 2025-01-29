@@ -83,7 +83,7 @@
                 {% for item in menu_items %}
                 <div class="bg-white rounded-2xl shadow-lg overflow-hidden group hover-card">
                     <div class="relative h-48">
-                        <img src="{{ item.image_url }}" alt="{{ item.name }}" 
+                        <img src="{{ item.images[0] if item.images else url_for('static', filename='img/default-dish.png') }}" alt="{{ item.name }}" 
                              class="w-full h-full object-cover group-hover:scale-110 transition-transform duration-500">
                         {% if item.dietary_info.vegetarian %}
                         <div class="absolute top-4 left-4">
@@ -119,7 +119,7 @@
                                     <i class="fas fa-plus text-gray-600"></i>
                                 </button>
                             </div>
-                            <button onclick="addToCart('{{ item._id }}', '{{ item.name }}', {{ item.price }})"
+                            <button onclick="addToCart('{{ item._id }}', '{{ item.name }}', {{ item.price }}, '{{ item.images[0] if item.images else url_for('static', filename='img/default-dish.png') }}')"
                                     class="bg-primary text-white px-4 py-2 rounded-full hover:bg-opacity-90 transition-all hover:translate-y-[-2px] flex items-center">
                                 <i class="fas fa-shopping-cart mr-2"></i>
                                 Add to Cart
@@ -178,7 +178,7 @@ function decrementQuantity(itemId) {
     }
 }
 
-function addToCart(itemId, itemName, price) {
+function addToCart(itemId, itemName, price, imageUrl) {
     const quantity = parseInt(document.getElementById(`quantity-${itemId}`).value);
     // Get existing cart from localStorage or initialize empty array
     const cart = JSON.parse(localStorage.getItem('cart') || '[]');
@@ -193,7 +193,8 @@ function addToCart(itemId, itemName, price) {
             id: itemId,
             name: itemName,
             price: price,
-            quantity: quantity
+            quantity: quantity,
+            imageUrl: imageUrl
         });
     }
     

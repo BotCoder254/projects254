@@ -9,7 +9,8 @@ passlib==1.7.4
 requests==2.31.0
 fpdf==1.7.2
 gunicorn==21.2.0
-eventlet==0.33.3
+gevent==23.9.1
+gevent-websocket==0.10.1
 python-socketio==5.10.0
 dnspython==2.4.2
 python-engineio==4.8.0
@@ -24,7 +25,6 @@ idna==3.4
 urllib3==2.0.4
 six==1.16.0
 bidict==0.22.1
-gevent==23.9.1
 greenlet==2.0.2
 zope.event==5.0
 zope.interface==6.0 

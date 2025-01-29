@@ -276,10 +276,55 @@
 <!-- Load Socket.IO first -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
 
+<!-- Initialize core functions -->
+<script>
+    // Core functions that need to be available immediately
+    function bulkAction(action) {
+        const selectedUsers = Array.from(document.querySelectorAll('input[name="user_select"]:checked'))
+            .map(checkbox => checkbox.value);
+        
+        if (selectedUsers.length === 0) {
+            alert('Please select users to perform this action');
+            return;
+        }
+        
+        if (action === 'delete' && !confirm('Are you sure you want to delete the selected users?')) {
+            return;
+        }
+        
+        fetch('/api/admin/users/bulk-action', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                user_ids: selectedUsers,
+                action: action
+            })
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                alert(`Successfully ${action}d selected users`);
+                location.reload();
+            } else {
+                alert(data.error || 'An error occurred');
+            }
+        })
+        .catch(error => {
+            alert('An error occurred while performing the action');
+            console.error('Error:', error);
+        });
+    }
+
+    // Make sure function is available globally
+    window.bulkAction = bulkAction;
+</script>
+
 <!-- Load user management script -->
 <script src="{{ url_for('static', filename='js/admin/users.js') }}"></script>
 
-<!-- Initialize Socket.IO -->
+<!-- Initialize Socket.IO and other functionality -->
 <script>
     document.addEventListener('DOMContentLoaded', function() {
         // Initialize Socket.IO

@@ -10,6 +10,7 @@ socket.on('user_update', function(data) {
         document.getElementById('total-users').textContent = data.stats.total_users;
         document.getElementById('active-users').textContent = data.stats.active_users;
         document.getElementById('new-users-today').textContent = data.stats.new_users_today;
+        document.getElementById('online-users').textContent = data.stats.online_users;
     }
     
     if (data.user) {
@@ -92,6 +93,8 @@ function closeDeleteModal() {
 }
 
 function updateUserRow(row, user) {
+    if (!row) return;
+    
     row.innerHTML = `
         <td class="px-6 py-4">
             <input type="checkbox" name="user_select" value="${user._id}" class="rounded text-primary focus:ring-primary">
@@ -136,6 +139,7 @@ function updateUserRow(row, user) {
     `;
 }
 
+// Core functions for bulk actions
 function bulkAction(action) {
     const selectedUsers = Array.from(document.querySelectorAll('input[name="user_select"]:checked'))
         .map(checkbox => checkbox.value);
@@ -241,6 +245,7 @@ function updateUsersTable(users) {
 
 // Initialize form submission handler
 document.addEventListener('DOMContentLoaded', function() {
+    // Initialize form submission
     const form = document.getElementById('editUserForm');
     if (form) {
         form.addEventListener('submit', function(e) {

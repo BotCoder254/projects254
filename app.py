@@ -1730,10 +1730,17 @@ def check_payment_status():
             if result.get('ResultCode') == '0':
                 # Create order
                 cart = session.get('cart', [])
-                # Convert any ObjectId in cart items to string
+                # Convert any ObjectId in cart items to string and ensure all required fields
+                processed_items = []
                 for item in cart:
-                    if 'id' in item and isinstance(item['id'], ObjectId):
-                        item['id'] = str(item['id'])
+                    processed_item = {
+                        'id': str(item['id']) if isinstance(item.get('id'), ObjectId) else str(item.get('id', '')),
+                        'name': item.get('name', 'Unknown Item'),
+                        'price': float(item.get('price', 0)),
+                        'quantity': int(item.get('quantity', 1)),
+                        'image_url': item.get('image_url', '')
+                    }
+                    processed_items.append(processed_item)
                 
                 total = sum(float(item['price']) * int(item['quantity']) for item in cart)
                 current_time = datetime.now()
@@ -1741,7 +1748,7 @@ def check_payment_status():
                 order = {
                     'number': 'ORD' + str(random.randint(10000, 99999)),
                     'user_id': str(current_user.get_id()) if not current_user.is_anonymous else None,
-                    'items': cart,
+                    'items': processed_items,
                     'total': total,
                     'payment': {
                         'method': 'mpesa',
@@ -1752,42 +1759,71 @@ def check_payment_status():
                         'checkout_request_id': checkout_request_id
                     },
                     'status': 'pending',
-                    'created_at': current_time.strftime('%Y-%m-%d %H:%M:%S')
+                    'created_at': current_time
                 }
                 
-                # Save order and update session
-                order_result = mongo.db.orders.insert_one(order)
-                order_id = str(order_result.inserted_id)
-                
-                session['last_order'] = {
-                    'number': order['number'],
-                    'total': total,
-                    '_id': order_id
-                }
-                session.pop('cart', None)
-                
-                # Prepare socket order data
-                socket_order = {
-                    **order,
-                    '_id': order_id,
-                    'created_at': current_time.strftime('%Y-%m-%d %H:%M:%S')
-                }
-                
-                # Notify admin
-                socketio.emit('new_order', {'order': socket_order}, room='admin')
-                
-                return jsonify({
-                    **result,
-                    'ResponseCode': result.get('ResponseCode', '0'),
-                    'success': True,
-                    'status': 'COMPLETED',
-                    'message': 'Payment completed successfully',
-                    'order': {
-                        'id': order_id,
-                        'number': order['number']
-                    },
-                    'redirect_url': url_for('payment_history')  # Changed redirect to payment history
-                }), 200
+                try:
+                    # Save order to database
+                    order_result = mongo.db.orders.insert_one(order)
+                    order_id = str(order_result.inserted_id)
+                    
+                    # Clear cart after successful order
+                    session.pop('cart', None)
+                    
+                    # Add order to session history for guest users
+                    if current_user.is_anonymous:
+                        order_history = session.get('order_history', [])
+                        if not isinstance(order_history, list):
+                            order_history = []
+                        order_history.append(order_id)
+                        session['order_history'] = order_history
+                    
+                    # Prepare socket order data
+                    socket_order = {
+                        **order,
+                        '_id': order_id,
+                        'created_at': current_time.strftime('%Y-%m-%d %H:%M:%S')
+                    }
+                    
+                    # Notify admin and update order status
+                    socketio.emit('new_order', {'order': socket_order}, room='admin')
+                    socketio.emit('order_status_update', {
+                        'order_id': order_id,
+                        'status': 'pending',
+                        'payment_status': 'completed'
+                    })
+                    
+                    # Update menu items order count
+                    for item in processed_items:
+                        try:
+                            mongo.db.menu.update_one(
+                                {'_id': ObjectId(item['id'])},
+                                {'$inc': {'orders_count': item['quantity']}}
+                            )
+                        except Exception as e:
+                            logging.error(f"Error updating menu item order count: {str(e)}")
+                    
+                    return jsonify({
+                        **result,
+                        'ResponseCode': result.get('ResponseCode', '0'),
+                        'success': True,
+                        'status': 'COMPLETED',
+                        'message': 'Payment completed successfully',
+                        'order': {
+                            'id': order_id,
+                            'number': order['number']
+                        },
+                        'redirect_url': url_for('payment_history')
+                    }), 200
+                    
+                except Exception as e:
+                    logging.error(f"Error saving order: {str(e)}")
+                    return jsonify({
+                        'ResponseCode': '1',
+                        'ResultCode': '1',
+                        'ResultDesc': 'Failed to save order',
+                        'errorMessage': str(e)
+                    }), 200
             
             # Check for processing status
             error_code = result.get('errorCode')
@@ -1824,104 +1860,6 @@ def check_payment_status():
             'errorMessage': str(e) or 'Payment query failed'
         }), 200
 
-@app.route('/order-confirmation')
-def order_confirmation():
-    try:
-        # Get last order from session
-        last_order = session.get('last_order')
-        if not last_order or not last_order.get('_id'):
-            logging.error("No order found in session")
-            flash('No order found', 'error')
-            return redirect(url_for('menu'))
-        
-        # Get full order details from database
-        try:
-            order = mongo.db.orders.find_one({'_id': ObjectId(last_order['_id'])})
-        except Exception as e:
-            logging.error(f"Error fetching order from database: {str(e)}")
-            flash('Order not found', 'error')
-            return redirect(url_for('menu'))
-            
-        if not order:
-            logging.error(f"Order not found with ID: {last_order['_id']}")
-            flash('Order not found', 'error')
-            return redirect(url_for('menu'))
-        
-        # Convert ObjectId to string
-        order['_id'] = str(order['_id'])
-        
-        # Ensure all required fields exist with defaults
-        order_data = {
-            'number': order.get('number', 'N/A'),
-            'items': [],
-            'total': float(order.get('total', 0)),
-            'status': order.get('status', 'pending'),
-            'created_at': order.get('created_at', datetime.now()),
-            'payment': {
-                'method': 'mpesa',
-                'status': 'completed',
-                'transaction_id': order.get('payment', {}).get('transaction_id', ''),
-                'phone': order.get('payment', {}).get('phone', ''),
-            },
-            'customer': {
-                'name': order.get('customer', {}).get('name', 'Guest User'),
-                'email': order.get('customer', {}).get('email', ''),
-                'phone': order.get('customer', {}).get('phone', ''),
-                'address': order.get('customer', {}).get('address', '')
-            }
-        }
-        
-        # Process order items
-        for item in order.get('items', []):
-            try:
-                item_data = {
-                    'id': str(item['id']) if isinstance(item.get('id'), ObjectId) else item.get('id', ''),
-                    'name': item.get('name', 'Unknown Item'),
-                    'price': float(item.get('price', 0)),
-                    'quantity': int(item.get('quantity', 1)),
-                    'image_url': item.get('image_url', ''),
-                    'category': ''
-                }
-                
-                # Get additional menu item details if possible
-                if item.get('id'):
-                    try:
-                        menu_item = mongo.db.menu.find_one({'_id': ObjectId(item_data['id'])})
-                        if menu_item:
-                            item_data['category'] = menu_item.get('category', '')
-                            if menu_item.get('images'):
-                                item_data['image_url'] = menu_item['images'][0]
-                    except Exception as e:
-                        logging.error(f"Error fetching menu item details: {str(e)}")
-                
-                order_data['items'].append(item_data)
-            except Exception as e:
-                logging.error(f"Error processing order item: {str(e)}")
-                continue
-        
-        # Format dates
-        try:
-            if isinstance(order_data['created_at'], str):
-                order_data['created_at'] = datetime.strptime(order_data['created_at'], '%Y-%m-%d %H:%M:%S')
-            order_data['formatted_date'] = order_data['created_at'].strftime('%B %d, %Y at %I:%M %p')
-        except Exception as e:
-            logging.error(f"Error formatting date: {str(e)}")
-            order_data['formatted_date'] = datetime.now().strftime('%B %d, %Y at %I:%M %p')
-        
-        # Format status displays
-        order_data['status_display'] = order_data['status'].title()
-        order_data['payment']['status_display'] = order_data['payment']['status'].title()
-        
-        return render_template('order-confirmation.html',
-                             order=order_data,
-                             payment_status=order_data['payment']['status_display'],
-                             order_status=order_data['status_display'])
-    
-    except Exception as e:
-        logging.error(f"Error in order confirmation: {str(e)}")
-        flash('Error loading order confirmation', 'error')
-        return redirect(url_for('menu'))
-
 @app.route('/payment-history')
 def payment_history():
     try:
@@ -1930,6 +1868,7 @@ def payment_history():
         # Get user's orders with proper error handling
         if current_user.is_authenticated:
             try:
+                # For authenticated users, get their orders
                 orders = list(mongo.db.orders.find(
                     {'user_id': str(current_user.get_id())},
                     sort=[('created_at', -1)]
@@ -1938,7 +1877,7 @@ def payment_history():
                 logging.error(f"Database error for authenticated user: {str(e)}")
                 orders = []
         else:
-            # For guest users, get orders from session history with validation
+            # For guest users, get orders from session history
             session_orders = session.get('order_history', [])
             if not isinstance(session_orders, list):
                 session_orders = []
@@ -1953,10 +1892,11 @@ def payment_history():
                     continue
             
             try:
+                # Get orders for guest users
                 orders = list(mongo.db.orders.find(
-                    {'_id': {'$in': order_ids}},
+                    {'_id': {'$in': order_ids}} if order_ids else {},
                     sort=[('created_at', -1)]
-                )) if order_ids else []
+                ))
             except Exception as e:
                 logging.error(f"Database error for guest user: {str(e)}")
                 orders = []
@@ -1964,6 +1904,7 @@ def payment_history():
         # Process orders with proper validation
         for order in orders:
             try:
+                # Basic order information
                 processed_order = {
                     '_id': str(order['_id']),
                     'number': order.get('number', 'N/A'),
@@ -1971,8 +1912,8 @@ def payment_history():
                     'status': order.get('status', 'pending'),
                     'items': [],
                     'payment': {
-                        'method': 'mpesa',
-                        'status': 'completed',
+                        'method': order.get('payment', {}).get('method', 'mpesa'),
+                        'status': order.get('payment', {}).get('status', 'completed'),
                         'transaction_id': order.get('payment', {}).get('transaction_id', ''),
                         'phone': order.get('payment', {}).get('phone', '')
                     }
@@ -2025,6 +1966,9 @@ def payment_history():
                 logging.error(f"Error processing order {order.get('_id', 'Unknown')}: {str(e)}")
                 continue
 
+        # Log the number of orders found
+        logging.info(f"Found {len(processed_orders)} orders for {'authenticated user' if current_user.is_authenticated else 'guest user'}")
+        
         # Set up real-time updates via Socket.IO
         socketio.emit('init_orders', {'orders': processed_orders})
         

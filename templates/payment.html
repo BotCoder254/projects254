@@ -156,14 +156,23 @@ document.addEventListener('DOMContentLoaded', function() {
                     
                     if (statusData.status === 'COMPLETED') {
                         clearInterval(checkStatusInterval);
-                        window.location.href = '/order-confirmation';
+                        window.location.href = statusData.redirect_url || '/payment-history';
                     } else if (statusData.status === 'FAILED') {
                         clearInterval(checkStatusInterval);
-                        statusText.textContent = 'Payment failed. Please try again.';
+                        statusText.textContent = statusData.message || 'Payment failed. Please try again.';
                         setTimeout(() => {
                             modal.classList.add('hidden');
                             modal.classList.remove('flex');
                         }, 2000);
+                    } else if (statusData.isCanceled) {
+                        clearInterval(checkStatusInterval);
+                        statusText.textContent = 'Payment was canceled.';
+                        setTimeout(() => {
+                            modal.classList.add('hidden');
+                            modal.classList.remove('flex');
+                        }, 2000);
+                    } else if (statusData.isProcessing) {
+                        statusText.textContent = statusData.errorMessage || 'Payment is being processed...';
                     }
                 }, 5000);
             } else {

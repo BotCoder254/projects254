@@ -7,9 +7,9 @@
             <h1 class="text-3xl font-bold text-gray-900 mb-8">Payment History</h1>
             
             {% if orders %}
-            <div class="space-y-6">
+            <div class="space-y-6" id="orders-container">
                 {% for order in orders %}
-                <div class="bg-white rounded-2xl shadow-lg p-6">
+                <div class="bg-white rounded-2xl shadow-lg p-6" data-order-id="{{ order._id }}">
                     <div class="flex justify-between items-start mb-4">
                         <div>
                             <h2 class="text-xl font-semibold text-gray-900">Order #{{ order.number }}</h2>
@@ -24,6 +24,18 @@
                                     bg-yellow-100 text-yellow-800
                                 {% endif %}">
                                 {{ order.payment.status_display }}
+                            </span>
+                            <span class="inline-flex items-center px-3 py-1 rounded-full text-sm font-medium ml-2
+                                {% if order.status == 'completed' %}
+                                    bg-green-100 text-green-800
+                                {% elif order.status == 'pending' %}
+                                    bg-yellow-100 text-yellow-800
+                                {% elif order.status == 'processing' %}
+                                    bg-blue-100 text-blue-800
+                                {% else %}
+                                    bg-gray-100 text-gray-800
+                                {% endif %}">
+                                {{ order.status_display }}
                             </span>
                         </div>
                     </div>
@@ -55,11 +67,15 @@
                                 {% if order.payment.transaction_id %}
                                 <p class="text-sm text-gray-600">Transaction ID: {{ order.payment.transaction_id }}</p>
                                 {% endif %}
+                                {% if order.payment.phone %}
+                                <p class="text-sm text-gray-600">Phone: {{ order.payment.phone }}</p>
+                                {% endif %}
                             </div>
                             {% if order.payment.status == 'completed' %}
                                 {% if not order.receipt_downloaded %}
                                 <a href="{{ url_for('download_receipt', order_id=order._id) }}" 
-                                   class="inline-flex items-center px-4 py-2 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 bg-white hover:bg-gray-50">
+                                   class="inline-flex items-center px-4 py-2 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 download-receipt"
+                                   data-order-id="{{ order._id }}">
                                     <i class="fas fa-download mr-2"></i>
                                     Download Receipt
                                 </a>
@@ -100,9 +116,65 @@
     // Listen for order updates
     socket.on('order_update', function(data) {
         if (data.action === 'receipt_downloaded') {
-            // Refresh the page to update receipt download status
-            location.reload();
+            var orderElement = document.querySelector(`[data-order-id="${data.order_id}"]`);
+            if (orderElement) {
+                var downloadButton = orderElement.querySelector('.download-receipt');
+                if (downloadButton) {
+                    downloadButton.replaceWith(createDownloadedBadge());
+                }
+            }
         }
     });
+
+    // Listen for order status updates
+    socket.on('order_status_update', function(data) {
+        var orderElement = document.querySelector(`[data-order-id="${data.order_id}"]`);
+        if (orderElement) {
+            updateOrderStatus(orderElement, data.status);
+            if (data.payment_status) {
+                updatePaymentStatus(orderElement, data.payment_status);
+            }
+        }
+    });
+
+    function createDownloadedBadge() {
+        var span = document.createElement('span');
+        span.className = 'inline-flex items-center px-4 py-2 bg-gray-100 rounded-lg text-sm font-medium text-gray-500';
+        span.innerHTML = '<i class="fas fa-check mr-2"></i>Receipt Downloaded';
+        return span;
+    }
+
+    function updateOrderStatus(orderElement, status) {
+        var statusBadge = orderElement.querySelector('[data-status]');
+        if (statusBadge) {
+            statusBadge.className = `inline-flex items-center px-3 py-1 rounded-full text-sm font-medium ${getStatusClass(status)}`;
+            statusBadge.textContent = status.charAt(0).toUpperCase() + status.slice(1);
+        }
+    }
+
+    function updatePaymentStatus(orderElement, status) {
+        var paymentBadge = orderElement.querySelector('[data-payment-status]');
+        if (paymentBadge) {
+            paymentBadge.className = `inline-flex items-center px-3 py-1 rounded-full text-sm font-medium ${getPaymentStatusClass(status)}`;
+            paymentBadge.textContent = status.charAt(0).toUpperCase() + status.slice(1);
+        }
+    }
+
+    function getStatusClass(status) {
+        switch (status) {
+            case 'completed':
+                return 'bg-green-100 text-green-800';
+            case 'pending':
+                return 'bg-yellow-100 text-yellow-800';
+            case 'processing':
+                return 'bg-blue-100 text-blue-800';
+            default:
+                return 'bg-gray-100 text-gray-800';
+        }
+    }
+
+    function getPaymentStatusClass(status) {
+        return status === 'completed' ? 'bg-green-100 text-green-800' : 'bg-yellow-100 text-yellow-800';
+    }
 </script>
 {% endblock %} 

@@ -15,6 +15,7 @@ from pdf import PDF
 import requests
 import base64
 import logging
+import time
 
 # Load environment variables
 load_dotenv()
@@ -1673,15 +1674,18 @@ def process_payment():
 def check_payment_status():
     """Check payment status using M-Pesa query."""
     try:
-        logging.info("Checking payment status: %s", request.json)
+        logging.info("Received query request: %s", request.json)
         data = request.get_json()
         checkout_request_id = data.get('checkoutRequestId')
         
         if not checkout_request_id:
+            logging.error('Missing checkoutRequestId parameter')
             return jsonify({
-                'success': False,
-                'message': 'Missing checkout request ID'
-            }), 400
+                'ResponseCode': '1',
+                'ResultCode': '1',
+                'ResultDesc': 'Missing checkoutRequestId parameter',
+                'errorMessage': 'Missing checkoutRequestId parameter'
+            }), 200
 
         # Get access token
         access_token = get_access_token()
@@ -1693,7 +1697,8 @@ def check_payment_status():
 
         headers = {
             "Authorization": f"Bearer {access_token}",
-            "Content-Type": "application/json"
+            "Content-Type": "application/json",
+            "Accept": "application/json"
         }
 
         payload = {
@@ -1703,68 +1708,104 @@ def check_payment_status():
             "CheckoutRequestID": checkout_request_id
         }
 
-        logging.info("Sending payment status query with payload: %s", payload)
+        logging.info("Making query request: url=%s, payload=%s", url, payload)
         response = requests.post(url, json=payload, headers=headers)
-        response.raise_for_status()
-        result = response.json()
-        logging.info("Payment status response: %s", result)
-
-        if result.get('ResultCode') == '0':
-            # Payment successful - create order
-            cart = session.get('cart', [])
-            total = sum(item['price'] * item['quantity'] for item in cart)
+        
+        # Handle response
+        if response.status_code == 200:
+            result = response.json()
+            logging.info("Query response: %s", result)
             
-            order = {
-                'number': 'ORD' + str(random.randint(10000, 99999)),
-                'user_id': current_user.get_id() if not current_user.is_anonymous else None,
-                'items': cart,
-                'total': total,
-                'payment': {
-                    'method': 'mpesa',
-                    'transaction_id': result.get('MpesaReceiptNumber'),
-                    'phone': result.get('PhoneNumber'),
-                    'amount': total
-                },
-                'status': 'pending',
-                'created_at': datetime.now()
-            }
+            # Check for cancellation
+            if result.get('ResultCode') == '1032':
+                return jsonify({
+                    'ResponseCode': '3',
+                    'ResultCode': '1032',
+                    'ResultDesc': 'Transaction canceled by user',
+                    'errorMessage': 'Transaction was canceled',
+                    'isCanceled': True
+                }), 200
             
-            # Save order to database
-            result = mongo.db.orders.insert_one(order)
-            order['_id'] = str(result.inserted_id)
+            # Check for successful payment
+            if result.get('ResultCode') == '0':
+                # Create order
+                cart = session.get('cart', [])
+                total = sum(float(item['price']) * int(item['quantity']) for item in cart)
+                
+                current_time = datetime.now()
+                order = {
+                    'number': 'ORD' + str(random.randint(10000, 99999)),
+                    'user_id': current_user.get_id() if not current_user.is_anonymous else None,
+                    'items': cart,
+                    'total': total,
+                    'payment': {
+                        'method': 'mpesa',
+                        'transaction_id': result.get('MpesaReceiptNumber'),
+                        'phone': result.get('PhoneNumber'),
+                        'amount': total,
+                        'status': 'completed',
+                        'checkout_request_id': checkout_request_id
+                    },
+                    'status': 'pending',
+                    'created_at': current_time.strftime('%Y-%m-%d %H:%M:%S')
+                }
+                
+                # Save order and update session
+                order_result = mongo.db.orders.insert_one(order)
+                session['last_order'] = {
+                    'number': order['number'],
+                    'total': total,
+                    '_id': str(order_result.inserted_id)
+                }
+                session.pop('cart', None)
+                
+                # Notify admin
+                socket_order = {**order, 'created_at': current_time.strftime('%Y-%m-%d %H:%M:%S')}
+                socketio.emit('new_order', {'order': socket_order}, room='admin')
+                
+                return jsonify({
+                    **result,
+                    'ResponseCode': result.get('ResponseCode', '0'),
+                    'order': {
+                        'id': str(order_result.inserted_id),
+                        'number': order['number']
+                    }
+                }), 200
             
-            # Store order details in session for confirmation page
-            session['last_order'] = {
-                'number': order['number'],
-                'total': total,
-                '_id': str(result.inserted_id)
-            }
+            # Check for processing status
+            error_code = result.get('errorCode')
+            if error_code == '500.001.1001':
+                return jsonify({
+                    'ResponseCode': '2',
+                    'ResultCode': '2',
+                    'ResultDesc': 'The transaction is being processed',
+                    'errorMessage': result.get('errorMessage', 'Payment is processing'),
+                    'isProcessing': True
+                }), 200
             
-            # Clear cart
-            session.pop('cart', None)
-            
-            # Notify admin about new order
-            socketio.emit('new_order', {'order': order}, room='admin')
-            
+            # Return the original response for other cases
             return jsonify({
-                'success': True,
-                'status': 'COMPLETED',
-                'message': 'Payment completed successfully',
-                'order': order
-            })
+                **result,
+                'ResponseCode': result.get('ResponseCode', '1')
+            }), 200
+            
         else:
+            logging.error("M-Pesa API error response: %s", response.text)
             return jsonify({
-                'success': False,
-                'status': 'FAILED',
-                'message': 'Payment verification failed: ' + result.get('ResultDesc', 'Unknown error')
-            })
+                'ResponseCode': '1',
+                'ResultCode': '1',
+                'ResultDesc': 'Failed to check payment status',
+                'errorMessage': response.text
+            }), 200
 
     except Exception as e:
-        logging.error(f"Payment status check error: {str(e)}")
+        logging.error("Query error: %s", str(e))
         return jsonify({
-            'success': False,
-            'message': str(e)
-        }), 500
+            'ResponseCode': '1',
+            'ResultCode': '1',
+            'ResultDesc': str(e) or 'Failed to check payment status',
+            'errorMessage': str(e) or 'Payment query failed'
+        }), 200
 
 @app.route('/order-confirmation')
 def order_confirmation():
@@ -1772,13 +1813,44 @@ def order_confirmation():
     if not last_order:
         return redirect(url_for('menu'))
     
-    # Get full order details from database
-    order = mongo.db.orders.find_one({'_id': ObjectId(last_order['_id'])})
-    if not order:
+    try:
+        # Get full order details from database
+        order = mongo.db.orders.find_one({'_id': ObjectId(last_order['_id'])})
+        if not order:
+            return redirect(url_for('menu'))
+        
+        # Convert ObjectId to string
+        order['_id'] = str(order['_id'])
+        
+        # Ensure order items is a list and not a dict or function
+        if not order.get('items'):
+            order['items'] = []
+        elif not isinstance(order['items'], list):
+            if isinstance(order['items'], dict):
+                order['items'] = [order['items']]
+            else:
+                order['items'] = list(order['items'])
+        
+        # Format dates
+        if 'created_at' in order:
+            if isinstance(order['created_at'], str):
+                try:
+                    order['created_at'] = datetime.strptime(order['created_at'], '%Y-%m-%d %H:%M:%S')
+                except ValueError:
+                    order['created_at'] = datetime.now()
+            elif not isinstance(order['created_at'], datetime):
+                order['created_at'] = datetime.now()
+        
+        # Calculate total if not present
+        if 'total' not in order:
+            order['total'] = sum(float(item.get('price', 0)) * int(item.get('quantity', 0)) for item in order['items'])
+        
+        return render_template('order-confirmation.html', order=order)
+        
+    except Exception as e:
+        logging.error(f"Error in order confirmation: {str(e)}")
+        flash('Error loading order confirmation', 'error')
         return redirect(url_for('menu'))
-    
-    order['_id'] = str(order['_id'])
-    return render_template('order-confirmation.html', order=order)
 
 @app.route('/download-receipt/<order_id>')
 def download_receipt(order_id):

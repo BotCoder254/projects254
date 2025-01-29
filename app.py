@@ -18,6 +18,10 @@ app = Flask(__name__)
 app.config["SECRET_KEY"] = os.getenv("SECRET_KEY", "your-secret-key")
 app.config["MONGO_URI"] = os.getenv("MONGO_URI", "mongodb://localhost:27017/food_ordering")
 
+# Configure upload folder with absolute path
+app.config['UPLOAD_FOLDER'] = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'static', 'uploads')
+os.makedirs(os.path.join(app.config['UPLOAD_FOLDER'], 'menu'), exist_ok=True)
+
 # Initialize MongoDB
 mongo = PyMongo(app)
 
@@ -513,7 +517,7 @@ def admin_dashboard():
 @admin_required
 def admin_menu():
     menu_items = mongo.db.menu.find()
-    categories = mongo.db.menu.distinct('category')
+    categories = [category['name'] for category in mongo.db.categories.find()]
     
     # Calculate menu statistics
     stats = {
@@ -781,8 +785,19 @@ def admin_analytics():
     previous_active_users = mongo.db.users.count_documents({'last_login': {'$lt': datetime.now() - timedelta(days=30), '$gte': datetime.now() - timedelta(days=60)}})
     users_growth = ((active_users - previous_active_users) / previous_active_users * 100) if previous_active_users > 0 else 0
     
-    # Get top selling items
-    top_items = list(mongo.db.menu.find().sort('orders_count', -1).limit(10))
+    # Get top selling items with revenue
+    pipeline = [
+        {'$unwind': '$items'},
+        {'$group': {
+            '_id': '$items.id',
+            'name': {'$first': '$items.name'},
+            'orders_count': {'$sum': 1},
+            'revenue': {'$sum': {'$multiply': ['$items.price', '$items.quantity']}}
+        }},
+        {'$sort': {'orders_count': -1}},
+        {'$limit': 10}
+    ]
+    top_items = list(mongo.db.orders.aggregate(pipeline))
     
     # Get sales by category
     category_sales = list(mongo.db.orders.aggregate([
@@ -1174,40 +1189,64 @@ def emit_user_update():
 @admin_required
 def add_menu_item():
     try:
+        if 'images' not in request.files:
+            return jsonify({'error': 'No images provided'}), 400
+
         data = request.form.to_dict()
         images = request.files.getlist('images')
         
+        # Validate category
+        category = data.get('category')
+        if not category or not mongo.db.categories.find_one({'name': category}):
+            return jsonify({'error': 'Invalid category selected'}), 400
+        
         # Save images and get their URLs
         image_urls = []
+        upload_dir = os.path.join(app.config['UPLOAD_FOLDER'], 'menu')
+        
         for image in images:
-            if image:
-                filename = secure_filename(image.filename)
-                filepath = os.path.join(app.config['UPLOAD_FOLDER'], 'menu', filename)
-                os.makedirs(os.path.dirname(filepath), exist_ok=True)
-                image.save(filepath)
-                image_urls.append(url_for('static', filename=f'uploads/menu/{filename}'))
+            if image and image.filename:
+                try:
+                    filename = secure_filename(image.filename)
+                    if not filename:
+                        continue
+                    
+                    filepath = os.path.join(upload_dir, filename)
+                    image.save(filepath)
+                    image_urls.append(url_for('static', filename=f'uploads/menu/{filename}'))
+                except Exception as e:
+                    app.logger.error(f"Error saving image {filename}: {str(e)}")
+                    continue
+        
+        current_time = datetime.now()
         
         # Prepare menu item data
         menu_item = {
-            'name': data['name'],
-            'description': data['description'],
-            'price': float(data['price']),
-            'category': data['category'],
-            'active': data['active'].lower() == 'true',
+            'name': data.get('name', ''),
+            'description': data.get('description', ''),
+            'price': float(data.get('price', 0)),
+            'category': category,
+            'active': data.get('active', 'true').lower() == 'true',
             'images': image_urls,
-            'created_at': datetime.now(),
+            'created_at': current_time,
             'orders_count': 0
         }
         
         # Insert into database
         result = mongo.db.menu.insert_one(menu_item)
         
-        # Emit menu update
-        emit_menu_update()
+        # Prepare response data
+        response_item = menu_item.copy()
+        response_item['_id'] = str(result.inserted_id)
+        response_item['created_at'] = current_time.isoformat()
         
-        return jsonify({'success': True, 'item_id': str(result.inserted_id)})
+        # Emit menu update
+        socketio.emit('menu_update', {'action': 'add', 'item': response_item})
+        
+        return jsonify({'success': True, 'item': response_item})
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        app.logger.error(f"Error adding menu item: {str(e)}")
+        return jsonify({'error': 'An error occurred while saving the menu item', 'details': str(e)}), 500
 
 @app.route('/api/admin/menu/<item_id>', methods=['GET'])
 @login_required
@@ -1235,6 +1274,11 @@ def update_menu_item(item_id):
         if not item:
             return jsonify({'error': 'Item not found'}), 404
         
+        # Validate category
+        category = data.get('category')
+        if not category or not mongo.db.categories.find_one({'name': category}):
+            return jsonify({'error': 'Invalid category selected'}), 400
+        
         # Handle new images
         image_urls = item.get('images', [])
         for image in images:
@@ -1250,7 +1294,7 @@ def update_menu_item(item_id):
             'name': data['name'],
             'description': data['description'],
             'price': float(data['price']),
-            'category': data['category'],
+            'category': category,
             'active': data['active'].lower() == 'true',
             'images': image_urls,
             'updated_at': datetime.now()
@@ -1261,10 +1305,14 @@ def update_menu_item(item_id):
             {'$set': updates}
         )
         
-        # Emit menu update
-        emit_menu_update()
+        # Get updated item for response
+        updated_item = mongo.db.menu.find_one({'_id': ObjectId(item_id)})
+        updated_item['_id'] = str(updated_item['_id'])
         
-        return jsonify({'success': True})
+        # Emit menu update
+        socketio.emit('menu_update', {'action': 'update', 'item': updated_item})
+        
+        return jsonify({'success': True, 'item': updated_item})
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
@@ -1282,7 +1330,7 @@ def delete_menu_item(item_id):
         mongo.db.menu.delete_one({'_id': ObjectId(item_id)})
         
         # Emit menu update
-        emit_menu_update()
+        socketio.emit('menu_update', {'action': 'delete', 'item_id': item_id})
         
         return jsonify({'success': True})
     except Exception as e:
@@ -1330,7 +1378,7 @@ def bulk_menu_action():
             )
         
         # Emit menu update
-        emit_menu_update()
+        socketio.emit('menu_update', {'action': 'bulk', 'item_ids': item_ids, 'action': action})
         
         return jsonify({'success': True})
     except Exception as e:
@@ -1352,7 +1400,9 @@ def search_menu_items():
                 {'description': {'$regex': query, '$options': 'i'}}
             ]
         if category != 'all':
-            search_query['category'] = category
+            # Verify category exists
+            if mongo.db.categories.find_one({'name': category}):
+                search_query['category'] = category
         
         # Get matching items
         items = list(mongo.db.menu.find(search_query))
@@ -1371,7 +1421,7 @@ def emit_menu_update():
         menu_stats = {
             'total_items': mongo.db.menu.count_documents({}),
             'active_items': mongo.db.menu.count_documents({'active': True}),
-            'categories': len(mongo.db.menu.distinct('category')),
+            'categories': mongo.db.categories.count_documents({}),
         }
         
         # Get top seller

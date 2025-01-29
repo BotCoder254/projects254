@@ -1,8 +1,9 @@
 // Menu Management JavaScript
 
-// Initialize socket connection
-let currentItemId = null;
-let socket = io();
+// Initialize socket connection if not already initialized
+if (typeof socket === 'undefined') {
+    let socket = io();
+}
 
 // Socket.IO event listeners
 socket.on('menu_update', function(data) {
@@ -21,9 +22,49 @@ socket.on('menu_update', function(data) {
     }
 });
 
+let currentItemId = null;
+
 // Define utility functions
 function showAlert(message, type = 'info') {
     alert(message); // Simple alert for now
+}
+
+function bulkAction(action) {
+    const selectedItems = Array.from(document.querySelectorAll('input[name="item_select"]:checked'))
+        .map(checkbox => checkbox.value);
+    
+    if (selectedItems.length === 0) {
+        showAlert('Please select items to perform this action', 'warning');
+        return;
+    }
+    
+    if (action === 'delete' && !confirm('Are you sure you want to delete the selected items?')) {
+        return;
+    }
+    
+    fetch('/api/admin/menu/bulk-action', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+            item_ids: selectedItems,
+            action: action
+        })
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            showAlert(`Successfully ${action}d selected items`, 'success');
+            location.reload();
+        } else {
+            showAlert(data.error || 'An error occurred', 'error');
+        }
+    })
+    .catch(error => {
+        showAlert('An error occurred while performing the action', 'error');
+        console.error('Error:', error);
+    });
 }
 
 function clearImagePreviews() {
@@ -31,6 +72,15 @@ function clearImagePreviews() {
     const preview = document.getElementById('previewImage');
     if (container) container.innerHTML = '';
     if (preview) preview.style.backgroundImage = '';
+}
+
+function closeItemModal() {
+    const modal = document.getElementById('itemModal');
+    if (modal) {
+        modal.classList.add('hidden');
+        modal.classList.remove('flex');
+        clearImagePreviews();
+    }
 }
 
 function updatePreview() {
@@ -51,6 +101,22 @@ function updatePreview() {
 }
 
 // Define core functions
+function openAddModal() {
+    currentItemId = null;
+    const modal = document.getElementById('itemModal');
+    const form = document.getElementById('itemForm');
+    const title = document.getElementById('modalTitle');
+    
+    if (modal && form && title) {
+        title.textContent = 'Add Menu Item';
+        form.reset();
+        clearImagePreviews();
+        updatePreview();
+        modal.classList.remove('hidden');
+        modal.classList.add('flex');
+    }
+}
+
 function editItem(itemId) {
     currentItemId = itemId;
     
@@ -142,9 +208,14 @@ function confirmDelete() {
 function handleImageUpload(event) {
     const files = event.target.files;
     const container = document.getElementById('imagePreviewContainer');
-    container.innerHTML = '';
+    container.innerHTML = ''; // Clear existing previews
+    const processedFiles = new Set(); // Track processed files
     
     Array.from(files).forEach((file, index) => {
+        if (processedFiles.has(file.name)) {
+            return; // Skip duplicate files
+        }
+        
         if (!file.type.startsWith('image/')) {
             showAlert('Please upload only image files');
             return;
@@ -155,6 +226,7 @@ function handleImageUpload(event) {
             return;
         }
         
+        processedFiles.add(file.name);
         const reader = new FileReader();
         reader.onload = function(e) {
             if (index === 0) {
@@ -257,215 +329,6 @@ function updateMenuTable(items) {
 
 // Initialize form submission handler
 document.addEventListener('DOMContentLoaded', function() {
-    const form = document.getElementById('itemForm');
-    if (form) {
-        form.addEventListener('submit', function(e) {
-            e.preventDefault();
-            
-            const formData = new FormData(this);
-            const url = currentItemId ? 
-                `/api/admin/menu/${currentItemId}` : 
-                '/api/admin/menu';
-            
-            fetch(url, {
-                method: currentItemId ? 'PUT' : 'POST',
-                body: formData
-            })
-            .then(response => response.json())
-            .then(data => {
-                if (data.success) {
-                    showAlert('Successfully ' + (currentItemId ? 'updated' : 'added') + ' menu item');
-                    closeItemModal();
-                    location.reload();
-                } else {
-                    showAlert(data.error || 'An error occurred');
-                }
-            })
-            .catch(error => {
-                showAlert('An error occurred while saving the item');
-                console.error('Error:', error);
-            });
-        });
-    }
-});
-
-// Expose functions to global scope
-window.editItem = editItem;
-window.deleteItem = deleteItem;
-window.confirmDelete = confirmDelete;
-window.handleImageUpload = handleImageUpload;
-window.removeImage = removeImage;
-window.filterItems = filterItems;
-window.clearImagePreviews = clearImagePreviews;
-window.updatePreview = updatePreview;
-
-// Immediately expose all functions to the global scope
-(function() {
-    // Define all functions in the global scope
-    window.openAddModal = function() {
-        currentItemId = null;
-        const modal = document.getElementById('itemModal');
-        const form = document.getElementById('itemForm');
-        const title = document.getElementById('modalTitle');
-        
-        if (modal && form && title) {
-            title.textContent = 'Add Menu Item';
-            form.reset();
-            clearImagePreviews();
-            updatePreview();
-            modal.classList.remove('hidden');
-            modal.classList.add('flex');
-        }
-    };
-
-    window.closeItemModal = function() {
-        const modal = document.getElementById('itemModal');
-        if (modal) {
-            modal.classList.add('hidden');
-            modal.classList.remove('flex');
-            clearImagePreviews();
-        }
-    };
-
-    window.bulkAction = function(action) {
-        const selectedItems = Array.from(document.querySelectorAll('input[name="item_select"]:checked'))
-            .map(checkbox => checkbox.value);
-        
-        if (selectedItems.length === 0) {
-            showAlert('Please select items to perform this action', 'warning');
-            return;
-        }
-        
-        if (action === 'delete' && !confirm('Are you sure you want to delete the selected items?')) {
-            return;
-        }
-        
-        fetch('/api/admin/menu/bulk-action', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({
-                item_ids: selectedItems,
-                action: action
-            })
-        })
-        .then(response => response.json())
-        .then(data => {
-            if (data.success) {
-                showAlert(`Successfully ${action}d selected items`, 'success');
-                location.reload();
-            } else {
-                showAlert(data.error || 'An error occurred', 'error');
-            }
-        })
-        .catch(error => {
-            showAlert('An error occurred while performing the action', 'error');
-            console.error('Error:', error);
-        });
-    };
-
-    window.filterItems = function() {
-        const query = document.getElementById('menuSearch').value;
-        const category = document.getElementById('categoryFilter').value;
-        
-        fetch(`/api/admin/menu/search?q=${query}&category=${category}`)
-            .then(response => response.json())
-            .then(data => {
-                updateMenuTable(data);
-            })
-            .catch(error => {
-                showAlert('An error occurred while filtering', 'error');
-                console.error('Error:', error);
-            });
-    };
-
-    window.closeDeleteModal = function() {
-        const modal = document.getElementById('deleteConfirmModal');
-        if (modal) {
-            modal.classList.add('hidden');
-            modal.classList.remove('flex');
-        }
-    };
-})();
-
-// Initialize event listeners when DOM is loaded
-document.addEventListener('DOMContentLoaded', function() {
-    // Form submission
-    const form = document.getElementById('itemForm');
-    if (form) {
-        form.addEventListener('submit', function(e) {
-            e.preventDefault();
-            
-            // Basic validation
-            const name = document.getElementById('itemName').value.trim();
-            const description = document.getElementById('itemDescription').value.trim();
-            const price = parseFloat(document.getElementById('itemPrice').value);
-            const category = document.getElementById('itemCategory').value;
-            const status = document.getElementById('itemStatus').value;
-            
-            if (!name) {
-                showAlert('Please enter a name for the menu item', 'error');
-                return;
-            }
-            
-            if (!description) {
-                showAlert('Please enter a description for the menu item', 'error');
-                return;
-            }
-            
-            if (isNaN(price) || price <= 0) {
-                showAlert('Please enter a valid price greater than 0', 'error');
-                return;
-            }
-            
-            if (!category) {
-                showAlert('Please select a category', 'error');
-                return;
-            }
-            
-            const formData = new FormData(this);
-            const url = currentItemId ? 
-                `/api/admin/menu/${currentItemId}` : 
-                '/api/admin/menu';
-            
-            // Show loading state
-            const submitButton = form.querySelector('button[type="submit"]');
-            const originalText = submitButton.innerHTML;
-            submitButton.disabled = true;
-            submitButton.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i>Saving...';
-            
-            fetch(url, {
-                method: currentItemId ? 'PUT' : 'POST',
-                body: formData
-            })
-            .then(response => {
-                if (!response.ok) {
-                    throw new Error(`HTTP error! status: ${response.status}`);
-                }
-                return response.json();
-            })
-            .then(data => {
-                if (data.success) {
-                    showAlert('Successfully ' + (currentItemId ? 'updated' : 'added') + ' menu item', 'success');
-                    closeItemModal();
-                    location.reload();
-                } else {
-                    throw new Error(data.error || 'An error occurred');
-                }
-            })
-            .catch(error => {
-                showAlert(error.message || 'An error occurred while saving the item', 'error');
-                console.error('Error:', error);
-            })
-            .finally(() => {
-                // Reset button state
-                submitButton.disabled = false;
-                submitButton.innerHTML = originalText;
-            });
-        });
-    }
-
     // Live preview handlers
     ['itemName', 'itemDescription', 'itemPrice', 'itemCategory'].forEach(id => {
         const element = document.getElementById(id);
@@ -507,7 +370,89 @@ document.addEventListener('DOMContentLoaded', function() {
             checkboxes.forEach(checkbox => checkbox.checked = e.target.checked);
         });
     }
+
+    // Form submission
+    const form = document.getElementById('itemForm');
+    if (form) {
+        form.addEventListener('submit', function(e) {
+            e.preventDefault();
+            
+            // Basic validation
+            const name = document.getElementById('itemName').value.trim();
+            const description = document.getElementById('itemDescription').value.trim();
+            const price = parseFloat(document.getElementById('itemPrice').value);
+            const category = document.getElementById('itemCategory').value;
+            const status = document.getElementById('itemStatus').value;
+            
+            if (!name || !description || isNaN(price) || price <= 0 || !category) {
+                showAlert('Please fill in all required fields correctly', 'error');
+                return;
+            }
+            
+            const formData = new FormData(this);
+            const url = currentItemId ? 
+                `/api/admin/menu/${currentItemId}` : 
+                '/api/admin/menu';
+            
+            // Show loading state
+            const submitButton = form.querySelector('button[type="submit"]');
+            const originalText = submitButton.innerHTML;
+            submitButton.disabled = true;
+            submitButton.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i>Saving...';
+            
+            fetch(url, {
+                method: currentItemId ? 'PUT' : 'POST',
+                body: formData
+            })
+            .then(response => {
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+                return response.json();
+            })
+            .then(data => {
+                if (data.success) {
+                    showAlert('Successfully ' + (currentItemId ? 'updated' : 'added') + ' menu item', 'success');
+                    closeItemModal();
+                    // Emit socket event for real-time update
+                    socket.emit('menu_update', { action: currentItemId ? 'update' : 'add', item: data.item });
+                    location.reload();
+                } else {
+                    throw new Error(data.error || 'An error occurred');
+                }
+            })
+            .catch(error => {
+                showAlert(error.message || 'An error occurred while saving the item', 'error');
+                console.error('Error:', error);
+            })
+            .finally(() => {
+                // Reset button state
+                submitButton.disabled = false;
+                submitButton.innerHTML = originalText;
+            });
+        });
+    }
 });
+
+// Expose functions to global scope
+window.openAddModal = openAddModal;
+window.handleImageUpload = handleImageUpload;
+window.editItem = editItem;
+window.deleteItem = deleteItem;
+window.confirmDelete = confirmDelete;
+window.removeImage = removeImage;
+window.filterItems = filterItems;
+window.clearImagePreviews = clearImagePreviews;
+window.updatePreview = updatePreview;
+window.closeItemModal = closeItemModal;
+window.bulkAction = bulkAction;
+window.closeDeleteModal = function() {
+    const modal = document.getElementById('deleteConfirmModal');
+    if (modal) {
+        modal.classList.add('hidden');
+        modal.classList.remove('flex');
+    }
+};
 
 function debounce(func, wait) {
     let timeout;

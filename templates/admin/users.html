@@ -279,34 +279,34 @@
 <!-- Initialize core functions -->
 <script>
     // Core functions that need to be available immediately
-    function bulkAction(action) {
-        const selectedUsers = Array.from(document.querySelectorAll('input[name="user_select"]:checked'))
-            .map(checkbox => checkbox.value);
-        
-        if (selectedUsers.length === 0) {
-            alert('Please select users to perform this action');
-            return;
-        }
+function bulkAction(action) {
+    const selectedUsers = Array.from(document.querySelectorAll('input[name="user_select"]:checked'))
+        .map(checkbox => checkbox.value);
+    
+    if (selectedUsers.length === 0) {
+        alert('Please select users to perform this action');
+        return;
+    }
         
         if (action === 'delete' && !confirm('Are you sure you want to delete the selected users?')) {
             return;
         }
-        
-        fetch('/api/admin/users/bulk-action', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({
-                user_ids: selectedUsers,
-                action: action
-            })
+    
+    fetch('/api/admin/users/bulk-action', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+            user_ids: selectedUsers,
+            action: action
         })
-        .then(response => response.json())
-        .then(data => {
+    })
+    .then(response => response.json())
+    .then(data => {
             if (data.success) {
                 alert(`Successfully ${action}d selected users`);
-                location.reload();
+        location.reload();
             } else {
                 alert(data.error || 'An error occurred');
             }
@@ -334,9 +334,9 @@
         const selectAll = document.getElementById('selectAll');
         if (selectAll) {
             selectAll.addEventListener('change', function(e) {
-                const checkboxes = document.querySelectorAll('input[name="user_select"]');
-                checkboxes.forEach(checkbox => checkbox.checked = e.target.checked);
-            });
+    const checkboxes = document.querySelectorAll('input[name="user_select"]');
+    checkboxes.forEach(checkbox => checkbox.checked = e.target.checked);
+});
         }
 
         // Initialize search functionality

@@ -273,266 +273,36 @@
 {% endblock admin_content %}
 
 {% block scripts %}
+<!-- Load Socket.IO first -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
+
+<!-- Load user management script -->
+<script src="{{ url_for('static', filename='js/admin/users.js') }}"></script>
+
+<!-- Initialize Socket.IO -->
 <script>
-let currentUserId = null;
-let socket = io();
+    document.addEventListener('DOMContentLoaded', function() {
+        // Initialize Socket.IO
+        window.socket = io();
 
-// Socket.IO event listeners
-socket.on('user_update', function(data) {
-    // Update user stats
-    if (data.stats) {
-        document.getElementById('total-users').textContent = data.stats.total_users;
-        document.getElementById('active-users').textContent = data.stats.active_users;
-        document.getElementById('new-users-today').textContent = data.stats.new_users_today;
-        document.getElementById('online-users').textContent = data.stats.online_users;
-    }
-    
-    // Update user table if the user is in the current view
-    if (data.user) {
-        const userRow = document.querySelector(`tr[data-user-id="${data.user._id}"]`);
-        if (userRow) {
-            updateUserRow(userRow, data.user);
+        // Initialize select all checkbox functionality
+        const selectAll = document.getElementById('selectAll');
+        if (selectAll) {
+            selectAll.addEventListener('change', function(e) {
+                const checkboxes = document.querySelectorAll('input[name="user_select"]');
+                checkboxes.forEach(checkbox => checkbox.checked = e.target.checked);
+            });
         }
-    }
-});
 
-socket.on('user_activity', function(data) {
-    // Update online users count
-    document.getElementById('online-users').textContent = data.active_users;
-});
-
-function updateUserRow(row, user) {
-    row.innerHTML = `
-        <td class="px-6 py-4">
-            <input type="checkbox" name="user_select" value="${user._id}" class="rounded text-primary focus:ring-primary">
-        </td>
-        <td class="px-6 py-4 whitespace-nowrap">
-            <div class="flex items-center">
-                <img src="${user.avatar_url || '/static/img/default-avatar.png'}" 
-                     alt="${user.name}" 
-                     class="w-10 h-10 rounded-full">
-                <div class="ml-4">
-                    <div class="text-sm font-medium text-gray-900">${user.name}</div>
-                    <div class="text-sm text-gray-500">${user.email}</div>
-                </div>
-            </div>
-        </td>
-        <td class="px-6 py-4 whitespace-nowrap">
-            <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full 
-                       ${user.status === 'active' ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}">
-                ${user.status.charAt(0).toUpperCase() + user.status.slice(1)}
-            </span>
-        </td>
-        <td class="px-6 py-4 whitespace-nowrap">
-            <span class="text-sm text-gray-900">${user.role.charAt(0).toUpperCase() + user.role.slice(1)}</span>
-        </td>
-        <td class="px-6 py-4 whitespace-nowrap">
-            <span class="text-sm text-gray-900">${user.total_orders}</span>
-        </td>
-        <td class="px-6 py-4 whitespace-nowrap">
-            <span class="text-sm text-gray-900">$${user.total_spent ? user.total_spent.toFixed(2) : '0.00'}</span>
-        </td>
-        <td class="px-6 py-4 whitespace-nowrap">
-            <span class="text-sm text-gray-500">${user.last_activity ? new Date(user.last_activity).toLocaleString() : 'Never'}</span>
-        </td>
-        <td class="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
-            <button onclick="editUser('${user._id}')" class="text-blue-600 hover:text-blue-900 mr-3">
-                <i class="fas fa-edit"></i>
-            </button>
-            <button onclick="deleteUser('${user._id}')" class="text-red-600 hover:text-red-900">
-                <i class="fas fa-trash"></i>
-            </button>
-        </td>
-    `;
-}
-
-// Handle bulk actions
-function bulkAction(action) {
-    const selectedUsers = Array.from(document.querySelectorAll('input[name="user_select"]:checked'))
-        .map(checkbox => checkbox.value);
-    
-    if (selectedUsers.length === 0) {
-        alert('Please select users to perform this action');
-        return;
-    }
-    
-    fetch('/api/admin/users/bulk-action', {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-            user_ids: selectedUsers,
-            action: action
-        })
-    })
-    .then(response => response.json())
-    .then(data => {
-        location.reload();
-    })
-    .catch(error => console.error('Error:', error));
-}
-
-// Handle user search
-document.getElementById('userSearch').addEventListener('input', debounce(function(e) {
-    const query = e.target.value;
-    const filter = document.getElementById('userFilter').value;
-    
-    fetch(`/api/admin/users/search?q=${query}&filter=${filter}`)
-        .then(response => response.json())
-        .then(data => {
-            updateUsersTable(data);
-        })
-        .catch(error => console.error('Error:', error));
-}, 300));
-
-function filterUsers() {
-    const query = document.getElementById('userSearch').value;
-    const filter = document.getElementById('userFilter').value;
-    
-    fetch(`/api/admin/users/search?q=${query}&filter=${filter}`)
-        .then(response => response.json())
-        .then(data => {
-            updateUsersTable(data);
-        })
-        .catch(error => console.error('Error:', error));
-}
-
-function updateUsersTable(users) {
-    const tbody = document.querySelector('tbody');
-    tbody.innerHTML = users.map(user => `
-        <tr class="hover:bg-gray-50" data-user-id="${user._id}">
-            <td class="px-6 py-4">
-                <input type="checkbox" name="user_select" value="${user._id}" class="rounded text-primary focus:ring-primary">
-            </td>
-            <td class="px-6 py-4 whitespace-nowrap">
-                <div class="flex items-center">
-                    <img src="${user.avatar_url || '/static/img/default-avatar.png'}" 
-                         alt="${user.name}" 
-                         class="w-10 h-10 rounded-full">
-                    <div class="ml-4">
-                        <div class="text-sm font-medium text-gray-900">${user.name}</div>
-                        <div class="text-sm text-gray-500">${user.email}</div>
-                    </div>
-                </div>
-            </td>
-            <td class="px-6 py-4 whitespace-nowrap">
-                <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full 
-                           ${user.status === 'active' ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}">
-                    ${user.status.charAt(0).toUpperCase() + user.status.slice(1)}
-                </span>
-            </td>
-            <td class="px-6 py-4 whitespace-nowrap">
-                <span class="text-sm text-gray-900">${user.role.charAt(0).toUpperCase() + user.role.slice(1)}</span>
-            </td>
-            <td class="px-6 py-4 whitespace-nowrap">
-                <span class="text-sm text-gray-900">${user.total_orders}</span>
-            </td>
-            <td class="px-6 py-4 whitespace-nowrap">
-                <span class="text-sm text-gray-900">$${user.total_spent ? user.total_spent.toFixed(2) : '0.00'}</span>
-            </td>
-            <td class="px-6 py-4 whitespace-nowrap">
-                <span class="text-sm text-gray-500">${user.last_activity ? new Date(user.last_activity).toLocaleString() : 'Never'}</span>
-            </td>
-            <td class="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
-                <button onclick="editUser('${user._id}')" class="text-blue-600 hover:text-blue-900 mr-3">
-                    <i class="fas fa-edit"></i>
-                </button>
-                <button onclick="deleteUser('${user._id}')" class="text-red-600 hover:text-red-900">
-                    <i class="fas fa-trash"></i>
-                </button>
-            </td>
-        </tr>
-    `).join('');
-}
-
-// Edit user functions
-function editUser(userId) {
-    currentUserId = userId;
-    fetch(`/api/admin/users/${userId}`)
-        .then(response => response.json())
-        .then(user => {
-            document.getElementById('editName').value = user.name;
-            document.getElementById('editEmail').value = user.email;
-            document.getElementById('editRole').value = user.role;
-            document.getElementById('editStatus').value = user.status;
-            document.getElementById('editUserModal').classList.remove('hidden');
-            document.getElementById('editUserModal').classList.add('flex');
-        })
-        .catch(error => console.error('Error:', error));
-}
-
-function closeEditModal() {
-    document.getElementById('editUserModal').classList.add('hidden');
-    document.getElementById('editUserModal').classList.remove('flex');
-}
-
-document.getElementById('editUserForm').addEventListener('submit', function(e) {
-    e.preventDefault();
-    
-    const formData = {
-        name: document.getElementById('editName').value,
-        email: document.getElementById('editEmail').value,
-        role: document.getElementById('editRole').value,
-        status: document.getElementById('editStatus').value
-    };
-    
-    fetch(`/api/admin/users/${currentUserId}`, {
-        method: 'PUT',
-        headers: {
-            'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(formData)
-    })
-    .then(response => response.json())
-    .then(data => {
-        closeEditModal();
-        location.reload();
-    })
-    .catch(error => console.error('Error:', error));
-});
-
-// Delete user functions
-function deleteUser(userId) {
-    currentUserId = userId;
-    document.getElementById('deleteConfirmModal').classList.remove('hidden');
-    document.getElementById('deleteConfirmModal').classList.add('flex');
-}
-
-function closeDeleteModal() {
-    document.getElementById('deleteConfirmModal').classList.add('hidden');
-    document.getElementById('deleteConfirmModal').classList.remove('flex');
-}
-
-function confirmDelete() {
-    fetch(`/api/admin/users/${currentUserId}`, {
-        method: 'DELETE'
-    })
-    .then(response => response.json())
-    .then(data => {
-        closeDeleteModal();
-        location.reload();
-    })
-    .catch(error => console.error('Error:', error));
-}
-
-// Select all checkbox functionality
-document.getElementById('selectAll').addEventListener('change', function(e) {
-    const checkboxes = document.querySelectorAll('input[name="user_select"]');
-    checkboxes.forEach(checkbox => checkbox.checked = e.target.checked);
-});
-
-// Debounce function for search input
-function debounce(func, wait) {
-    let timeout;
-    return function executedFunction(...args) {
-        const later = () => {
-            clearTimeout(timeout);
-            func(...args);
-        };
-        clearTimeout(timeout);
-        timeout = setTimeout(later, wait);
-    };
-}
+        // Initialize search functionality
+        const searchInput = document.getElementById('userSearch');
+        if (searchInput) {
+            searchInput.addEventListener('input', function() {
+                if (typeof filterUsers === 'function') {
+                    filterUsers();
+                }
+            });
+        }
+    });
 </script>
 {% endblock scripts %} 

@@ -891,7 +891,7 @@ def admin_analytics():
     
     popular_dishes = {
         'labels': [item['name'] for item in top_items],
-        'data': [item.get('orders_count', 0) for item in top_items]
+        'data': [item['orders_count'] for item in top_items]
     }
     
     order_activity = {
@@ -1548,31 +1548,50 @@ def payment():
 
 def get_access_token():
     """Generate OAuth access token."""
-    consumer_key = "frmypHgIJYc7mQuUu5NBvnYc0kF3StP3"
+    consumer_key = "frmypHgIJYc7mQuUu5NBvnYc0kF1StP3"  # Updated consumer key
     consumer_secret = "UAeJAJLNUkV5MLpL"
     url = "https://api.safaricom.co.ke/oauth/v1/generate?grant_type=client_credentials"
     
-    # Create auth string and encode to base64
-    auth_string = f"{consumer_key}:{consumer_secret}"
-    auth_bytes = auth_string.encode('ascii')
-    auth_b64 = base64.b64encode(auth_bytes).decode('ascii')
-    
-    headers = {
-        "Authorization": f"Basic {auth_b64}"
-    }
-    
     try:
-        response = requests.get(url, headers=headers)
-        response.raise_for_status()
-        return response.json()['access_token']
+        # Create auth string and encode to base64
+        auth_string = f"{consumer_key}:{consumer_secret}"
+        auth_bytes = auth_string.encode('ascii')
+        auth_b64 = base64.b64encode(auth_bytes).decode('ascii')
+        
+        headers = {
+            "Authorization": f"Basic {auth_b64}",
+            "Content-Type": "application/json",
+            "Accept": "application/json"
+        }
+        
+        logging.info("Requesting access token with headers: %s", headers)
+        response = requests.get(url, headers=headers, verify=True)
+        
+        if response.status_code != 200:
+            logging.error("Access token request failed. Status: %d, Response: %s", 
+                        response.status_code, response.text)
+            raise Exception(f"Failed to get access token: {response.text}")
+            
+        token_data = response.json()
+        if 'access_token' not in token_data:
+            logging.error("Access token not found in response: %s", token_data)
+            raise Exception("Access token not found in response")
+            
+        logging.info("Successfully obtained access token")
+        return token_data['access_token']
+        
     except requests.exceptions.RequestException as e:
-        logging.error(f"Error getting access token: {str(e)}")
+        logging.error("Network error getting access token: %s", str(e))
+        raise Exception(f"Network error: {str(e)}")
+    except Exception as e:
+        logging.error("Unexpected error getting access token: %s", str(e))
         raise
 
 @app.route('/process-payment', methods=['POST'])
 def process_payment():
     """Process payment using M-Pesa STK Push."""
     try:
+        logging.info("Received payment request: %s", request.json)
         data = request.get_json()
         if not data or 'phone' not in data or 'amount' not in data:
             return jsonify({
@@ -1598,7 +1617,8 @@ def process_payment():
         password = base64.b64encode(password_str.encode()).decode('utf-8')
 
         headers = {
-            "Authorization": f"Bearer {access_token}"
+            "Authorization": f"Bearer {access_token}",
+            "Content-Type": "application/json"
         }
 
         payload = {
@@ -1615,9 +1635,11 @@ def process_payment():
             "TransactionDesc": "Food Order Payment"
         }
 
+        logging.info("Sending STK push request with payload: %s", payload)
         response = requests.post(url, json=payload, headers=headers)
         response.raise_for_status()
         result = response.json()
+        logging.info("STK push response: %s", result)
 
         if result.get('ResponseCode') == "0":
             # Store checkout request ID for later verification
@@ -1634,17 +1656,24 @@ def process_payment():
                 'message': 'Failed to initiate payment: ' + result.get('ResponseDescription', 'Unknown error')
             }), 400
 
-    except Exception as e:
+    except requests.exceptions.RequestException as e:
         logging.error(f"Payment error: {str(e)}")
         return jsonify({
             'success': False,
-            'message': str(e)
+            'message': f"Payment request failed: {str(e)}"
+        }), 500
+    except Exception as e:
+        logging.error(f"Unexpected error in payment processing: {str(e)}")
+        return jsonify({
+            'success': False,
+            'message': f"An unexpected error occurred: {str(e)}"
         }), 500
 
 @app.route('/check-payment-status', methods=['POST'])
 def check_payment_status():
     """Check payment status using M-Pesa query."""
     try:
+        logging.info("Checking payment status: %s", request.json)
         data = request.get_json()
         checkout_request_id = data.get('checkoutRequestId')
         
@@ -1663,7 +1692,8 @@ def check_payment_status():
         password = base64.b64encode(password_str.encode()).decode('utf-8')
 
         headers = {
-            "Authorization": f"Bearer {access_token}"
+            "Authorization": f"Bearer {access_token}",
+            "Content-Type": "application/json"
         }
 
         payload = {
@@ -1673,9 +1703,11 @@ def check_payment_status():
             "CheckoutRequestID": checkout_request_id
         }
 
+        logging.info("Sending payment status query with payload: %s", payload)
         response = requests.post(url, json=payload, headers=headers)
         response.raise_for_status()
         result = response.json()
+        logging.info("Payment status response: %s", result)
 
         if result.get('ResultCode') == '0':
             # Payment successful - create order

@@ -16,20 +16,47 @@ import requests
 import base64
 import logging
 import time
+from pymongo.mongo_client import MongoClient
+from pymongo.server_api import ServerApi
 
 # Load environment variables
 load_dotenv()
 
+# MongoDB Connection
+uri = "mongodb+srv://teumteum776:soulmind254@cluster0.wxgbm.mongodb.net/food_ordering?retryWrites=true&w=majority&appName=Cluster0"
+
 app = Flask(__name__)
 app.config["SECRET_KEY"] = os.getenv("SECRET_KEY", "your-secret-key")
-app.config["MONGO_URI"] = os.getenv("MONGO_URI", "mongodb://localhost:27017/food_ordering")
+app.config["MONGO_URI"] = uri
+
+# Initialize MongoDB
+try:
+    # Initialize MongoDB client first
+    client = MongoClient(uri, server_api=ServerApi('1'))
+    # Test connection with the client
+    client.admin.command('ping')
+    print("Successfully connected to MongoDB!")
+    
+    # Initialize Flask-PyMongo
+    mongo = PyMongo(app)
+    
+    # Initialize collections if they don't exist
+    if 'users' not in mongo.db.list_collection_names():
+        mongo.db.create_collection('users')
+    if 'menu' not in mongo.db.list_collection_names():
+        mongo.db.create_collection('menu')
+    if 'orders' not in mongo.db.list_collection_names():
+        mongo.db.create_collection('orders')
+    if 'categories' not in mongo.db.list_collection_names():
+        mongo.db.create_collection('categories')
+    
+except Exception as e:
+    print(f"Error connecting to MongoDB: {str(e)}")
+    raise
 
 # Configure upload folder with absolute path
 app.config['UPLOAD_FOLDER'] = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'static', 'uploads')
 os.makedirs(os.path.join(app.config['UPLOAD_FOLDER'], 'menu'), exist_ok=True)
-
-# Initialize MongoDB
-mongo = PyMongo(app)
 
 # Update existing menu items with default dietary_info
 def init_menu_items():
@@ -404,17 +431,20 @@ def track_order(order_id):
 
 # WebSocket event handlers
 @socketio.on('connect')
-def handle_connect():
-    """Handle Socket.IO connection"""
-    if current_user.is_authenticated and current_user.has_role('admin'):
-        join_room('admin_analytics')
-        # Send initial analytics data
-        with app.app_context():
-            data = get_realtime_user_data(
-                datetime.now() - timedelta(days=1),
-                datetime.now()
-            )
-            emit('user_activity', data, room='admin_analytics')
+def handle_connect(auth=None):
+    """Handle Socket.IO connection with auth parameter"""
+    try:
+        if current_user.is_authenticated and current_user.has_role('admin'):
+            join_room('admin_analytics')
+            # Send initial analytics data
+            with app.app_context():
+                data = get_realtime_user_data(
+                    datetime.now() - timedelta(days=1),
+                    datetime.now()
+                )
+                emit('user_activity', data, room='admin_analytics')
+    except Exception as e:
+        print(f"Error in handle_connect: {str(e)}")
 
 def emit_user_update():
     """Emit user activity updates to admin analytics"""

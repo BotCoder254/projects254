@@ -1779,10 +1779,14 @@ def check_payment_status():
                 return jsonify({
                     **result,
                     'ResponseCode': result.get('ResponseCode', '0'),
+                    'success': True,
+                    'status': 'COMPLETED',
+                    'message': 'Payment completed successfully',
                     'order': {
                         'id': order_id,
                         'number': order['number']
-                    }
+                    },
+                    'redirect_url': url_for('order_confirmation')
                 }), 200
             
             # Check for processing status
@@ -1822,27 +1826,31 @@ def check_payment_status():
 
 @app.route('/order-confirmation')
 def order_confirmation():
-    last_order = session.get('last_order')
-    if not last_order:
-        return redirect(url_for('menu'))
-    
     try:
+        last_order = session.get('last_order')
+        if not last_order or not last_order.get('_id'):
+            flash('No order found', 'error')
+            return redirect(url_for('menu'))
+        
         # Get full order details from database
         order = mongo.db.orders.find_one({'_id': ObjectId(last_order['_id'])})
         if not order:
+            flash('Order not found', 'error')
             return redirect(url_for('menu'))
         
         # Convert ObjectId to string
         order['_id'] = str(order['_id'])
         
-        # Ensure order items is a list and not a dict or function
-        if not order.get('items'):
+        # Ensure items is a list
+        if 'items' not in order or not order['items']:
             order['items'] = []
-        elif not isinstance(order['items'], list):
-            if isinstance(order['items'], dict):
-                order['items'] = [order['items']]
-            else:
-                order['items'] = list(order['items'])
+        elif isinstance(order['items'], dict):
+            order['items'] = [order['items']]
+        
+        # Convert any ObjectId in items to string
+        for item in order['items']:
+            if 'id' in item and isinstance(item['id'], ObjectId):
+                item['id'] = str(item['id'])
         
         # Format dates
         if 'created_at' in order:
@@ -1854,9 +1862,16 @@ def order_confirmation():
             elif not isinstance(order['created_at'], datetime):
                 order['created_at'] = datetime.now()
         
-        # Calculate total if not present
+        # Ensure total exists
         if 'total' not in order:
             order['total'] = sum(float(item.get('price', 0)) * int(item.get('quantity', 0)) for item in order['items'])
+        
+        # Ensure payment info exists
+        if 'payment' not in order:
+            order['payment'] = {
+                'method': 'mpesa',
+                'status': 'completed'
+            }
         
         return render_template('order-confirmation.html', order=order)
         
